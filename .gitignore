@@ -60,9 +60,7 @@ _deps
 *~
 .vim/
 
-# Data folders and files - exclude entire Data directory
 
-Data/*/
 
 # Large data files and datasets
 Data/rgbd_dataset_freiburg1_xyz/depth/*.png
