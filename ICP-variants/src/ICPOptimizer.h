@@ -12,6 +12,18 @@
 #include "PointCloud.h"
 #include "ProcrustesAligner.h"
 
+#include <iostream>
+#include <vector>
+#include <Eigen/Dense>
+
+// Type definitions for 6D pose representation
+typedef Eigen::Matrix<float, 6, 1> Vector6f;
+typedef Eigen::Matrix<float, 3, 6> Matrix3x6f;
+typedef Eigen::Matrix<float, 6, 6> Matrix6f;
+
+using Vector3d = Eigen::Vector3d;
+using Matrix4d = Eigen::Matrix4d;
+using Matrix3d = Eigen::Matrix3d;
 
 /**
  * Helper methods for writing Ceres cost functions.
@@ -261,6 +273,7 @@ protected:
 
     void pruneCorrespondences(const std::vector<Vector3f>& sourceNormals, const std::vector<Vector3f>& targetNormals, std::vector<Match>& matches) {
         const unsigned nPoints = sourceNormals.size();
+        int prunedCount = 0;
 
         for (unsigned i = 0; i < nPoints; i++) {
             Match& match = matches[i];
@@ -268,14 +281,26 @@ protected:
                 const auto& sourceNormal = sourceNormals[i];
                 const auto& targetNormal = targetNormals[match.idx];
 
-                // TODO: Invalidate the match (set it to -1) if the angle between the normals is greater than 60
-                float angle = sourceNormal.dot(targetNormal);
-                if (angle < 0.5) {
+                // Check if normals are valid
+                if (!sourceNormal.allFinite() || !targetNormal.allFinite()) {
                     match.idx = -1;
+                    prunedCount++;
+                    continue;
                 }
+
+                // Compute angle between normals (more lenient threshold)
+                float dotProduct = sourceNormal.dot(targetNormal);
+                float angle = acos(std::min(1.0f, std::max(-1.0f, dotProduct)));
                 
+                // Use a more lenient threshold (90 degrees instead of 60)
+                if (angle > M_PI / 2.0f) {
+                    match.idx = -1;
+                    prunedCount++;
+                }
             }
         }
+        
+        std::cout << "Pruned " << prunedCount << " correspondences due to normal angle." << std::endl;
     }
 };
 
@@ -502,5 +527,230 @@ private:
 
 
         return estimatedPose;
+    }
+};
+
+
+/**
+ * @struct PointToPointError
+ * @brief Ceres cost functor for point-to-point ICP error.
+ * The residual is the 3D vector difference between the transformed source and the target point.
+ */
+struct PointToPointError {
+    const Vector3d source_point;
+    const Vector3d target_point;
+
+    PointToPointError(const Vector3d& source, const Vector3d& target)
+        : source_point(source), target_point(target) {}
+
+    template <typename T>
+    bool operator()(const T* const pose_increment, T* residuals) const {
+        // The pose_increment is a 6-element array:
+        // - First 3 elements are an angle-axis rotation vector.
+        // - Last 3 elements are a translation vector.
+        
+        T source_point_T[3] = {T(source_point.x()), T(source_point.y()), T(source_point.z())};
+        T transformed_point_T[3];
+
+        // Apply the rotation and translation increment.
+        ceres::AngleAxisRotatePoint(pose_increment, source_point_T, transformed_point_T);
+        transformed_point_T[0] += pose_increment[3];
+        transformed_point_T[1] += pose_increment[4];
+        transformed_point_T[2] += pose_increment[5];
+
+        // The residual is the difference between the target and the transformed source.
+        residuals[0] = T(target_point.x()) - transformed_point_T[0];
+        residuals[1] = T(target_point.y()) - transformed_point_T[1];
+        residuals[2] = T(target_point.z()) - transformed_point_T[2];
+
+        return true;
+    }
+};
+
+/**
+ * @struct PointToPlaneError
+ * @brief Ceres cost functor for point-to-plane ICP error.
+ * The residual is the scalar distance from the transformed source point to the plane
+ * defined by the target point and its normal.
+ */
+struct PointToPlaneError {
+    const Vector3d source_point;
+    const Vector3d target_point;
+    const Vector3d target_normal;
+
+    PointToPlaneError(const Vector3d& source, const Vector3d& target, const Vector3d& normal)
+        : source_point(source), target_point(target), target_normal(normal) {}
+
+    template <typename T>
+    bool operator()(const T* const pose_increment, T* residuals) const {
+        T source_point_T[3] = {T(source_point.x()), T(source_point.y()), T(source_point.z())};
+        T transformed_point_T[3];
+
+        // Apply the rotation and translation increment.
+        ceres::AngleAxisRotatePoint(pose_increment, source_point_T, transformed_point_T);
+        transformed_point_T[0] += pose_increment[3];
+        transformed_point_T[1] += pose_increment[4];
+        transformed_point_T[2] += pose_increment[5];
+
+        // The difference vector between the target and the transformed source.
+        T diff[3] = {
+            T(target_point.x()) - transformed_point_T[0],
+            T(target_point.y()) - transformed_point_T[1],
+            T(target_point.z()) - transformed_point_T[2]
+        };
+
+        // The residual is the dot product of the difference with the target normal.
+        residuals[0] = T(target_normal.x()) * diff[0] +
+                       T(target_normal.y()) * diff[1] +
+                       T(target_normal.z()) * diff[2];
+
+        return true;
+    }
+};
+
+
+/**
+ * @class LevenbergMarquardtICPOptimizer
+ * @brief An ICP implementation that uses the Ceres Solver library for optimization.
+ */
+class LevenbergMarquardtICPOptimizer : public ICPOptimizer {
+public:
+    LevenbergMarquardtICPOptimizer() {
+        // Ceres options are configured directly during the solve step,
+        // so fewer parameters are needed here compared to a manual implementation.
+    }
+
+    virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose) override {
+        // For precision with Ceres, we will work with doubles.
+        Matrix4d estimatedPose = initialPose.cast<double>();
+
+        // Build the FLANN index for the target point cloud for fast nearest neighbor search.
+        m_nearestNeighborSearch->buildIndex(target.getPoints());
+
+        for (int i = 0; i < m_nIterations; ++i) {
+            std::cout << "=== ICP Iteration " << (i + 1) << "/" << m_nIterations << " ===" << std::endl;
+
+            // 1. Transform source points with the current estimated pose to find correspondences.
+            auto transformedPoints = transformPoints(source.getPoints(), estimatedPose.cast<float>());
+            auto transformedNormals = transformNormals(source.getNormals(), estimatedPose.cast<float>());
+
+            // 2. Find correspondences using the nearest neighbor search.
+            std::cout << "Matching points..." << std::endl;
+            auto matches = m_nearestNeighborSearch->queryMatches(transformedPoints);
+            pruneCorrespondences(transformedNormals, target.getNormals(), matches);
+            std::cout << "Matching complete." << std::endl;
+
+            // 3. Set up and solve the non-linear least squares problem with Ceres.
+            ceres::Problem problem;
+            // The parameter to optimize is a 6-DoF pose increment (angle-axis rotation + translation).
+            // We start with an increment of zero for each ICP iteration.
+            double pose_increment[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            
+            int validCorrespondences = 0;
+            for (size_t j = 0; j < transformedPoints.size(); ++j) {
+                if (matches[j].idx < 0) continue; // Skip invalid matches
+
+                validCorrespondences++;
+                // *** CRITICAL FIX: ***
+                // The optimization should refine the current pose. Therefore, the cost function
+                // needs to be built using the points that were actually matched: the *already transformed*
+                // source points. The solver will then find a small `pose_increment` to apply to these
+                // transformed points to better align them with their targets.
+                const Vector3f& source_pt_f = transformedPoints[j]; 
+                const Vector3f& target_pt_f = target.getPoints()[matches[j].idx];
+                const Vector3f& target_normal_f = target.getNormals()[matches[j].idx];
+
+                // Convert to double for Ceres
+                Vector3d source_pt = source_pt_f.cast<double>();
+                Vector3d target_pt = target_pt_f.cast<double>();
+                Vector3d target_normal = target_normal_f.cast<double>();
+
+                // *** POINT-TO-PLANE FIX: ***
+                // The point-to-plane error metric requires the normal to be a unit vector.
+                // We normalize it here to ensure the cost function is correctly scaled.
+                if (m_bUsePointToPlaneConstraints) {
+                    target_normal.normalize();
+                }
+
+                ceres::CostFunction* cost_function;
+                if (m_bUsePointToPlaneConstraints) {
+                    cost_function = new ceres::AutoDiffCostFunction<PointToPlaneError, 1, 6>(
+                        new PointToPlaneError(source_pt, target_pt, target_normal)
+                    );
+                } else {
+                    cost_function = new ceres::AutoDiffCostFunction<PointToPointError, 3, 6>(
+                        new PointToPointError(source_pt, target_pt)
+                    );
+                }
+                
+                // *** ROBUSTNESS IMPROVEMENT: ***
+                // Use a loss function to reduce the influence of outlier correspondences.
+                // CauchyLoss is a good general-purpose choice.
+                ceres::LossFunction* loss_function = new ceres::CauchyLoss(1.0);
+                problem.AddResidualBlock(cost_function, loss_function, pose_increment);
+            }
+            
+            std::cout << "Valid correspondences: " << validCorrespondences << "/" << transformedPoints.size() << std::endl;
+            if (validCorrespondences < 10) { // Need a minimum number of points to be stable
+                std::cerr << "Not enough valid correspondences. Stopping ICP." << std::endl;
+                break;
+            }
+
+            // 4. Configure and run the solver.
+            ceres::Solver::Options options;
+            options.linear_solver_type = ceres::DENSE_QR;
+            options.max_num_iterations = 20; // Increased iterations for robustness
+            options.minimizer_progress_to_stdout = false; // Set to true for detailed debug info
+            
+            ceres::Solver::Summary summary;
+            ceres::Solve(options, &problem, &summary);
+            
+            // 5. Convert the resulting increment to a matrix and pre-multiply it to the current pose.
+            Matrix4d increment_matrix = convertIncrementToMatrix(pose_increment);
+            estimatedPose = increment_matrix * estimatedPose;
+            
+            // Output summary for this iteration
+            double angle, tx, ty, tz;
+            getIncrementAsAngleAndTranslation(pose_increment, angle, tx, ty, tz);
+            std::cout << "Pose update - Translation: " << Vector3d(tx, ty, tz).norm() << ", Rotation: " << (angle * 180.0 / M_PI) << " deg" << std::endl;
+            
+            // Convergence check
+            if (Vector3d(tx, ty, tz).norm() < 1e-4 && angle < 1e-4) {
+                 std::cout << "Converged after " << i+1 << " iterations." << std::endl;
+                 break;
+            }
+            std::cout << std::endl;
+        }
+
+        // Store final result back into the float matrix.
+        initialPose = estimatedPose.cast<float>();
+    }
+
+private:
+    /**
+     * @brief Converts a 6-element pose increment (angle-axis, translation) to a 4x4 transformation matrix.
+     */
+    Matrix4d convertIncrementToMatrix(const double* const pose_increment) {
+        Matrix3d rotation;
+        // Convert the angle-axis vector to a rotation matrix.
+        ceres::AngleAxisToRotationMatrix(pose_increment, rotation.data());
+
+        Vector3d translation(pose_increment[3], pose_increment[4], pose_increment[5]);
+
+        Matrix4d transform = Matrix4d::Identity();
+        transform.block<3, 3>(0, 0) = rotation;
+        transform.block<3, 1>(0, 3) = translation;
+
+        return transform;
+    }
+
+    /**
+     * @brief Helper to extract human-readable values from the pose increment.
+     */
+    void getIncrementAsAngleAndTranslation(const double* const pose_increment, double& angle, double& tx, double& ty, double& tz) {
+        angle = sqrt(pose_increment[0]*pose_increment[0] + pose_increment[1]*pose_increment[1] + pose_increment[2]*pose_increment[2]);
+        tx = pose_increment[3];
+        ty = pose_increment[4];
+        tz = pose_increment[5];
     }
 };

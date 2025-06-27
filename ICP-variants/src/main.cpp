@@ -7,13 +7,31 @@
 #include "ICPOptimizer.h"
 #include "PointCloud.h"
 
+/*
+ * ICP Optimizer Configuration:
+ * 
+ * Choose one of the following ICP implementations:
+ * - USE_LINEAR_ICP = 1: Uses LinearICPOptimizer (fast, works well for small rotations)
+ * - USE_LM_ICP = 1: Uses LevenbergMarquardtICPOptimizer (robust, handles large rotations)
+ * - Both = 0: Uses CeresICPOptimizer (default, most robust but requires Ceres)
+ * 
+ * Constraint Type:
+ * - USE_POINT_TO_PLANE = 1: Uses point-to-plane constraints (usually better for surfaces)
+ * - USE_POINT_TO_PLANE = 0: Uses point-to-point constraints (faster, works well for point clouds)
+ * 
+ * Examples:
+ * - For bunny alignment with LM-ICP and point-to-plane: USE_LM_ICP=1, USE_POINT_TO_PLANE=1
+ * - For room reconstruction with linear ICP: USE_LINEAR_ICP=1, USE_POINT_TO_PLANE=0
+ */
+
 #define SHOW_BUNNY_CORRESPONDENCES 0
 
-#define USE_POINT_TO_PLANE	0
+#define USE_POINT_TO_PLANE	1
 #define USE_LINEAR_ICP		0
+#define USE_LM_ICP			1
 
-#define RUN_SHAPE_ICP		1
-#define RUN_SEQUENCE_ICP	0
+#define RUN_SHAPE_ICP		0
+#define RUN_SEQUENCE_ICP	1
 
 void debugCorrespondenceMatching() {
 	// Load the source and target mesh.
@@ -60,8 +78,8 @@ void debugCorrespondenceMatching() {
 
 int alignBunnyWithICP() {
 	// Load the source and target mesh.
-	const std::string filenameSource = std::string("/config/workspace/Data/Data/bunny_part2_trans.off");
-	const std::string filenameTarget = std::string("/config/workspace/Data/Data/bunny_part1.off");
+	const std::string filenameSource = std::string("/config/workspace/ICP_Analysis /Data/Data/bunny_part2_trans.off");
+	const std::string filenameTarget = std::string("/config/workspace/ICP_Analysis /Data/Data/bunny_part1.off");
 
 	SimpleMesh sourceMesh;
 	if (!sourceMesh.loadMesh(filenameSource)) {
@@ -78,16 +96,24 @@ int alignBunnyWithICP() {
 	// Estimate the pose from source to target mesh with ICP optimization.
 	ICPOptimizer* optimizer = nullptr;
 	if (USE_LINEAR_ICP) {
+		std::cout << "Using Linear ICP Optimizer" << std::endl;
 		optimizer = new LinearICPOptimizer();
 	}
+	else if (USE_LM_ICP) {
+		std::cout << "Using Levenberg-Marquardt ICP Optimizer" << std::endl;
+		optimizer = new LevenbergMarquardtICPOptimizer();
+		// Configure LM-specific parameters
+		LevenbergMarquardtICPOptimizer* lmOptimizer = static_cast<LevenbergMarquardtICPOptimizer*>(optimizer);      // Fewer iterations per ICP step  // More lenient threshold         // Fewer ICP iterations
+	}
 	else {
+		std::cout << "Using Ceres ICP Optimizer" << std::endl;
 		optimizer = new CeresICPOptimizer();
 	}
 	
 	optimizer->setMatchingMaxDistance(0.0003f);
 	if (USE_POINT_TO_PLANE) {
 		optimizer->usePointToPlaneConstraints(true);
-		optimizer->setNbOfIterations(10);
+		optimizer->setNbOfIterations(20);
 	}
 	else {
 		optimizer->usePointToPlaneConstraints(false);
@@ -137,16 +163,24 @@ int reconstructRoom() {
 	// Setup the optimizer.
 	ICPOptimizer* optimizer = nullptr;
 	if (USE_LINEAR_ICP) {
+		std::cout << "Using Linear ICP Optimizer for room reconstruction" << std::endl;
 		optimizer = new LinearICPOptimizer();
 	}
+	else if (USE_LM_ICP) {
+		std::cout << "Using Levenberg-Marquardt ICP Optimizer for room reconstruction" << std::endl;
+		optimizer = new LevenbergMarquardtICPOptimizer();
+		// Configure LM-specific parameters for room reconstruction
+		LevenbergMarquardtICPOptimizer* lmOptimizer = static_cast<LevenbergMarquardtICPOptimizer*>(optimizer);
+	}
 	else {
+		std::cout << "Using Ceres ICP Optimizer for room reconstruction" << std::endl;
 		optimizer = new CeresICPOptimizer();
 	}
 
 	optimizer->setMatchingMaxDistance(0.1f);
 	if (USE_POINT_TO_PLANE) {
 		optimizer->usePointToPlaneConstraints(true);
-		optimizer->setNbOfIterations(10);
+		optimizer->setNbOfIterations(20);
 	}
 	else {
 		optimizer->usePointToPlaneConstraints(false);
@@ -159,7 +193,7 @@ int reconstructRoom() {
 	estimatedPoses.push_back(currentCameraToWorld.inverse());
 
 	int i = 0;
-	const int iMax = 50;
+	const int iMax = 25;
 	while (sensor.processNextFrame() && i <= iMax) {
 		float* depthMap = sensor.getDepth();
 		Matrix3f depthIntrinsics = sensor.getDepthIntrinsics();
