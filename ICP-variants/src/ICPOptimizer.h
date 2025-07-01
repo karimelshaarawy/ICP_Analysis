@@ -758,3 +758,112 @@ private:
         tz = pose_increment[5];
     }
 };
+
+class SymmetricPointToPlaneConstraint {
+    public:
+        SymmetricPointToPlaneConstraint(
+            const Vector3f& sourcePoint, const Vector3f& sourceNormal,
+            const Vector3f& targetPoint, const Vector3f& targetNormal,
+            const float weight) :
+            m_sourcePoint{ sourcePoint },
+            m_sourceNormal{ sourceNormal },
+            m_targetPoint{ targetPoint },
+            m_targetNormal{ targetNormal },
+            m_weight{ weight }
+        { }
+    
+        template <typename T>
+        bool operator()(const T* const pose, T* residuals) const {
+            // Create PoseIncrement object to handle the transformation
+            PoseIncrement<T> poseIncrement(const_cast<T*>(pose));
+    
+            // Templated versions of input points and normals
+            T sourcePoint_T[3];
+            fillVector(m_sourcePoint, sourcePoint_T);
+    
+            T sourceNormal_T[3];
+            fillVector(m_sourceNormal, sourceNormal_T);
+    
+            T targetPoint_T[3];
+            fillVector(m_targetPoint, targetPoint_T);
+    
+            T targetNormal_T[3];
+            fillVector(m_targetNormal, targetNormal_T);
+    
+            // 1. Transform source point
+            T transformedSourcePoint[3];
+            poseIncrement.apply(sourcePoint_T, transformedSourcePoint);
+    
+            // 2. Transform source normal
+            T transformedSourceNormal[3];
+            poseIncrement.applyNormal(sourceNormal_T, transformedSourceNormal);
+            
+            // Normalize transformed source normal
+            T tsn_magnitude = ceres::sqrt(transformedSourceNormal[0]*transformedSourceNormal[0] + transformedSourceNormal[1]*transformedSourceNormal[1] + transformedSourceNormal[2]*transformedSourceNormal[2]);
+            if (tsn_magnitude < T(1e-9)) {
+                // Degenerate normal, return zero residual
+                residuals[0] = T(0);
+                return true;
+            }
+            T normalizedTransformedSourceNormal[3] = {
+                transformedSourceNormal[0] / tsn_magnitude,
+                transformedSourceNormal[1] / tsn_magnitude,
+                transformedSourceNormal[2] / tsn_magnitude
+            };
+    
+    
+            // Normalize target normal
+            T tn_magnitude = ceres::sqrt(targetNormal_T[0]*targetNormal_T[0] + targetNormal_T[1]*targetNormal_T[1] + targetNormal_T[2]*targetNormal_T[2]);
+            if (tn_magnitude < T(1e-9)) {
+                 // Degenerate normal, return zero residual
+                residuals[0] = T(0);
+                return true;
+            }
+            T normalizedTargetNormal[3] = {
+                targetNormal_T[0] / tn_magnitude,
+                targetNormal_T[1] / tn_magnitude,
+                targetNormal_T[2] / tn_magnitude
+            };
+    
+            // 3. Calculate difference vector
+            T diff[3];
+            diff[0] = transformedSourcePoint[0] - targetPoint_T[0];
+            diff[1] = transformedSourcePoint[1] - targetPoint_T[1];
+            diff[2] = transformedSourcePoint[2] - targetPoint_T[2];
+    
+            // 4. Calculate combined normal (n_p + n_q)
+            T combinedNormal[3];
+            combinedNormal[0] = normalizedTransformedSourceNormal[0] + normalizedTargetNormal[0];
+            combinedNormal[1] = normalizedTransformedSourceNormal[1] + normalizedTargetNormal[1];
+            combinedNormal[2] = normalizedTransformedSourceNormal[2] + normalizedTargetNormal[2];
+    
+            // 5. Calculate residual: (transformed_source_point - target_point) . (transformed_source_normal + target_normal)
+            T dotProduct = diff[0] * combinedNormal[0] +
+                           diff[1] * combinedNormal[1] +
+                           diff[2] * combinedNormal[2];
+    
+            // 6. Apply the weight
+            T sqrtWeight = T(sqrt(m_weight));
+            residuals[0] = sqrtWeight * dotProduct;
+    
+            return true;
+        }
+    
+        static ceres::CostFunction* create(
+            const Vector3f& sourcePoint, const Vector3f& sourceNormal,
+            const Vector3f& targetPoint, const Vector3f& targetNormal,
+            const float weight) {
+            return new ceres::AutoDiffCostFunction<SymmetricPointToPlaneConstraint, 1, 6>(
+                new SymmetricPointToPlaneConstraint(sourcePoint, sourceNormal, targetPoint, targetNormal, weight)
+            );
+        }
+    
+    protected:
+        const Vector3f m_sourcePoint;
+        const Vector3f m_sourceNormal;
+        const Vector3f m_targetPoint;
+        const Vector3f m_targetNormal;
+        const float m_weight;
+    };
+    
+    
