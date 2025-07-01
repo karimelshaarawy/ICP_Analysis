@@ -163,40 +163,39 @@ public:
     { }
 
     template <typename T>
-    bool operator()(const T* const pose, T* residuals) const {
-        // TODO: Implemented the point-to-plane cost function.
-        // The resulting 1D residual should be stored in residuals array. To apply the pose 
-        // increment (pose parameters) to the source point, you can use the PoseIncrement
-        // class.
-        // Important: Ceres automatically squares the cost function.
+bool operator()(const T* const pose, T* residuals) const {
+    // 1. Create a helper object to apply the pose transformation
+    PoseIncrement<T> poseIncrement(const_cast<T*>(pose));
 
-        T sourcePoint[3];
-        T targetPoint[3];
-        T targetNormal[3];
+    // 2. Define the source point, target point, and target normal as templated arrays
+    T sourcePoint[3];
+    fillVector(m_sourcePoint, sourcePoint);
 
-        fillVector(m_sourcePoint, sourcePoint);
-        fillVector(m_targetPoint, targetPoint);
-        fillVector(m_targetNormal, targetNormal);
+    T targetPoint[3];
+    fillVector(m_targetPoint, targetPoint);
 
+    T targetNormal[3];
+    fillVector(m_targetNormal, targetNormal);
+    
+    // 3. Apply the current pose transformation to the source point
+    T transformedSourcePoint[3];
+    poseIncrement.apply(sourcePoint, transformedSourcePoint);
 
+    // 4. Calculate the difference vector between the transformed source and the target
+    T diff[3];
+    diff[0] = transformedSourcePoint[0] - targetPoint[0];
+    diff[1] = transformedSourcePoint[1] - targetPoint[1];
+    diff[2] = transformedSourcePoint[2] - targetPoint[2];
 
-        PoseIncrement<T> poseIncrement(const_cast<T*>(pose));
-        
-        T transformedSourcePoint[3];
-        poseIncrement.apply(sourcePoint, transformedSourcePoint);
+    // 5. Calculate the residual: the dot product of the difference vector and the target normal
+    T dotProduct = diff[0] * targetNormal[0] + diff[1] * targetNormal[1] + diff[2] * targetNormal[2];
 
-        T diff[3];
-        diff[0] = transformedSourcePoint[0] - targetPoint[0];
-        diff[1] = transformedSourcePoint[1] - targetPoint[1];
-        diff[2] = transformedSourcePoint[2] - targetPoint[2];
+    // 6. Apply the weight
+    T sqrtWeight = T(sqrt(m_weight));
+    residuals[0] = sqrtWeight * dotProduct;
 
-        T dotProduct = diff[0] * targetNormal[0] + diff[1] * targetNormal[1] + diff[2] * targetNormal[2];
-
-        T sqrtWeight = T(sqrt(m_weight));
-        residuals[0] = sqrtWeight * dotProduct;
-
-
-        return true;
+    return true;
+}
     }
 
     static ceres::CostFunction* create(const Vector3f& sourcePoint, const Vector3f& targetPoint, const Vector3f& targetNormal, const float weight) {
@@ -483,50 +482,55 @@ private:
 
     Matrix4f estimatePosePointToPlane(const std::vector<Vector3f>& sourcePoints, const std::vector<Vector3f>& targetPoints, const std::vector<Vector3f>& targetNormals) {
         const unsigned nPoints = sourcePoints.size();
+    if (nPoints == 0) return Matrix4f::Identity();
 
-        // Build the system
-        MatrixXf A = MatrixXf::Zero(4 * nPoints, 6);
-        VectorXf b = VectorXf::Zero(4 * nPoints);
+    // Build the system A*x = b for the equation (R*s + t - d) · n = 0
+    // Linearized for small rotation R ≈ I + [α,β,γ]x:
+    // ( (I + [α,β,γ]x)s + t - d ) · n = 0
+    // ( s + (α,β,γ) x s + t - d ) · n = 0
+    // ( (α,β,γ) x s ) · n + (t) · n = (d - s) · n
+    // [ (s x n)^T   n^T ] [α,β,γ,tx,ty,tz]^T = n · (d - s)
 
-        for (unsigned i = 0; i < nPoints; i++) {
-            const auto& s = sourcePoints[i];
-            const auto& d = targetPoints[i];
-            const auto& n = targetNormals[i];
+    MatrixXf A = MatrixXf::Zero(nPoints, 6);
+    VectorXf b = VectorXf::Zero(nPoints);
 
-            A.row(i) = Vector4f(n[0], n[1], n[2], -1);
-            b(i) = d[0] * n[0] + d[1] * n[1] + d[2] * n[2];
+    for (unsigned i = 0; i < nPoints; i++) {
+        const auto& s = sourcePoints[i];
+        const auto& d = targetPoints[i];
+        // For a linear system, we need the normal of the *target* point from the original (non-transformed) cloud.
+        // However, since we don't have the original correspondences, we use the provided targetNormals list.
+        // This assumes targetNormals corresponds to targetPoints.
+        const auto& n = targetNormals[i];
 
-            A.row(i + nPoints) = Vector4f(0, 0, 0, 1);
-            b(i + nPoints) = 0;
+        // Build the i-th row of matrix A
+        Vector<float, 6> A_row;
+        A_row.head<3>() = s.cross(n); // Part for rotation
+        A_row.tail<3>() = n;          // Part for translation
+        A.row(i) = A_row;
 
-            A.row(i + 2 * nPoints) = Vector4f(0, 0, 0, 1);
-            b(i + 2 * nPoints) = 0;
+        // Build the i-th element of vector b
+        b(i) = n.dot(d - s);
+    }
 
+    // TODO: Solve the system. Your original code for this was correct.
+    VectorXf x = A.colPivHouseholderQr().solve(b);
 
+    // Extract rotation (α, β, γ) and translation (tx, ty, tz)
+    float alpha = x(0), beta = x(1), gamma = x(2);
+    Vector3f translation = x.tail<3>();
 
-        }
+    // Build the pose matrix from the small angle approximations
+    Matrix3f rotation;
+    rotation = AngleAxisf(gamma, Vector3f::UnitZ()) *
+               AngleAxisf(beta, Vector3f::UnitY()) *
+               AngleAxisf(alpha, Vector3f::UnitX());
 
-        // TODO: Solve the system
-        VectorXf x(6);
-        x = A.colPivHouseholderQr().solve(b);
+    // TODO: Build the pose matrix. Your original code for this was also correct.
+    Matrix4f estimatedPose = Matrix4f::Identity();
+    estimatedPose.block<3, 3>(0, 0) = rotation;
+    estimatedPose.block<3, 1>(0, 3) = translation;
 
-
-        float alpha = x(0), beta = x(1), gamma = x(2);
-
-        // Build the pose matrix
-        Matrix3f rotation = AngleAxisf(alpha, Vector3f::UnitX()).toRotationMatrix() *
-            AngleAxisf(beta, Vector3f::UnitY()).toRotationMatrix() *
-            AngleAxisf(gamma, Vector3f::UnitZ()).toRotationMatrix();
-
-        Vector3f translation = x.tail(3);
-
-        // TODO: Build the pose matrix using the rotation and translation matrices
-        Matrix4f estimatedPose = Matrix4f::Identity();
-        estimatedPose.block(0, 0, 3, 3) = rotation;
-        estimatedPose.block(0, 3, 3, 1) = translation;
-
-
-        return estimatedPose;
+    return estimatedPose;
     }
 };
 
