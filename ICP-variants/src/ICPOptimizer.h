@@ -140,17 +140,25 @@ public:
         m_weight{ weight }
     { }
 
-    template <typename T>
+    template<typename T>
     bool operator()(const T* const pose, T* residuals) const {
-        // TODO: Implemented the point-to-point cost function.
-        // The resulting 3D residual should be stored in residuals array. To apply the pose 
+        // Implemented the point-to-point cost function.
+        // The resulting 3D residual should be stored in residuals array. To apply the pose
         // increment (pose parameters) to the source point, you can use the PoseIncrement
         // class.
         // Important: Ceres automatically squares the cost function.
+        T sourcePoint[3];
+        fillVector(m_sourcePoint, sourcePoint);
 
-        residuals[0] = T(0);
-		residuals[1] = T(0);
-		residuals[2] = T(0);
+        PoseIncrement<T> poseIncrement =PoseIncrement<T>(const_cast< T* const>(pose));
+        T sourcePointTransformed[3];
+        poseIncrement.apply(sourcePoint, sourcePointTransformed);
+
+        // Calculate the residual: (R*s + t) - d
+        // Where R*s + t is sourcePointTransformed, d is m_targetPoint
+        residuals[0] = T(m_weight) * (sourcePointTransformed[0] - T(m_targetPoint[0]));
+        residuals[1] = T(m_weight) * (sourcePointTransformed[1] - T(m_targetPoint[1]));
+        residuals[2] = T(m_weight) * (sourcePointTransformed[2] - T(m_targetPoint[2]));
 
         return true;
     }
@@ -201,6 +209,17 @@ bool operator()(const T* const pose, T* residuals) const {
     }
 
 protected:
+
+template <typename T>
+void applyPoseTransformation(const T* pose_matrix, const T* point, T* result) const {
+    // Apply 4x4 transformation matrix to 3D point
+    result[0] = pose_matrix[0] * point[0] + pose_matrix[1] * point[1] + 
+               pose_matrix[2] * point[2] + pose_matrix[3];
+    result[1] = pose_matrix[4] * point[0] + pose_matrix[5] * point[1] + 
+               pose_matrix[6] * point[2] + pose_matrix[7];
+    result[2] = pose_matrix[8] * point[0] + pose_matrix[9] * point[1] + 
+               pose_matrix[10] * point[2] + pose_matrix[11];
+}
     const Vector3f m_sourcePoint;
     const Vector3f m_targetPoint;
     const Vector3f m_targetNormal;
@@ -870,6 +889,7 @@ public:
 
         for (int i = 0; i < m_nIterations; ++i) {
             std::cout << "=== ICP Iteration " << (i + 1) << "/" << m_nIterations << " ===" << std::endl;
+            ceres::Problem problem;
 
             // 1. Transform source points with the current estimated pose to find correspondences.
             auto transformedPoints = transformPoints(source.getPoints(), estimatedPose.cast<float>());
@@ -882,8 +902,7 @@ public:
             std::cout << "Matching complete." << std::endl;
 
             // 3. Set up and solve the non-linear least squares problem with Ceres.
-            ceres::Problem problem;
-            // The parameter to optimize is a 6-DoF pose increment (angle-axis rotation + translation).
+                    // The parameter to optimize is a 6-DoF pose increment (angle-axis rotation + translation).
             // We start with an increment of zero for each ICP iteration.
             double pose_increment[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
             
@@ -899,7 +918,7 @@ public:
                 // transformed points to better align them with their targets.
                 const Vector3f& source_pt_f = transformedPoints[j]; 
                 const Vector3f& target_pt_f = target.getPoints()[matches[j].idx];
-                const Vector3f& target_normal_f = target.getNormals()[matches[j].idx];
+                Vector3f target_normal_f = target.getNormals()[matches[j].idx]; 
 
                 // Convert to double for Ceres
                 Vector3d source_pt = source_pt_f.cast<double>();
@@ -912,14 +931,19 @@ public:
                 if (m_bUsePointToPlaneConstraints) {
                     target_normal.normalize();
                 }
-
                 ceres::CostFunction* cost_function;
                 if (m_bUsePointToPlaneConstraints) {
-                    cost_function = new ceres::AutoDiffCostFunction<PointToPlaneError, 1, 6>(
-                        new PointToPlaneError(source_pt, target_pt, target_normal)
+                    
+
+                    cost_function = PointToPlaneConstraint::create(
+                        source_pt_f,
+                        target_pt_f,
+                        target_normal_f,
+                        1.0f // Weight can be adjusted or made adaptive.
                     );
                 } else {
-                    cost_function = new ceres::AutoDiffCostFunction<PointToPointError, 3, 6>(
+                    // Keep using PointToPointError if needed
+                     cost_function = new ceres::AutoDiffCostFunction<PointToPointError, 3, 6>(
                         new PointToPointError(source_pt, target_pt)
                     );
                 }
@@ -929,6 +953,7 @@ public:
                 // CauchyLoss is a good general-purpose choice.
                 ceres::LossFunction* loss_function = new ceres::CauchyLoss(1.0);
                 problem.AddResidualBlock(cost_function, loss_function, pose_increment);
+               
             }
             
             std::cout << "Valid correspondences: " << validCorrespondences << "/" << transformedPoints.size() << std::endl;
@@ -940,16 +965,24 @@ public:
             // 4. Configure and run the solver.
             ceres::Solver::Options options;
             options.linear_solver_type = ceres::DENSE_QR;
-            options.max_num_iterations = 30; // Increased iterations for robustness
-            options.minimizer_progress_to_stdout = false; // Set to true for detailed debug info
-            
+            options.minimizer_progress_to_stdout = true;
+            options.max_num_iterations = 50;
+            options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
+            std::cout << summary.FullReport() << "\n";
             
             // 5. Convert the resulting increment to a matrix and pre-multiply it to the current pose.
             Matrix4d increment_matrix = convertIncrementToMatrix(pose_increment);
             estimatedPose = increment_matrix * estimatedPose;
-            
+            // ✅ Re-orthogonalize rotation to prevent drift
+
+            Eigen::Matrix3d R = estimatedPose.block<3,3>(0,0);
+            Eigen::JacobiSVD<Eigen::Matrix3d> svd(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
+            estimatedPose.block<3,3>(0,0) = svd.matrixU() * svd.matrixV().transpose(); // R ← closest SO(3)
+
+                            
             // Output summary for this iteration
             double angle, tx, ty, tz;
             getIncrementAsAngleAndTranslation(pose_increment, angle, tx, ty, tz);

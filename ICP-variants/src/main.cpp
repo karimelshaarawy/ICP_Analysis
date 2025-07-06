@@ -28,8 +28,8 @@
 
 #define USE_POINT_TO_PLANE  1
 #define USE_LINEAR_ICP      0
-#define USE_LM_ICP          0
-#define USE_SYMMETRIC_ICP   1 // Set to 1 to use Symmetric ICP
+#define USE_LM_ICP          1
+#define USE_SYMMETRIC_ICP   0 // Set to 1 to use Symmetric ICP
 
 
 #define RUN_SHAPE_ICP		0
