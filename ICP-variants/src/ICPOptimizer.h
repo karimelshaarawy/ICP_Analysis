@@ -55,6 +55,12 @@ public:
         return m_array;
     }
 
+        void getNormal(const T* normal, T* rotatedNormal) const {
+    ceres::AngleAxisRotatePoint(m_array, normal, rotatedNormal);
+    }
+
+
+
     /**
      * Applies the pose increment onto the input point and produces transformed output point.
      * Important: The memory for both 3D points (input and output) needs to be reserved (i.e. on the stack)
@@ -73,6 +79,26 @@ public:
         outputPoint[1] = temp[1] + translation[1];
         outputPoint[2] = temp[2] + translation[2];
     }
+    void applyInverse(T* inputPoint, T* outputPoint) const {
+    // pose[0,1,2] is angle-axis rotation.
+    // pose[3,4,5] is translation.
+    const T* rotation = m_array;
+    const T* translation = m_array + 3;
+
+    // First, subtract the translation
+    T temp[3];
+    temp[0] = inputPoint[0] - translation[0];
+    temp[1] = inputPoint[1] - translation[1];
+    temp[2] = inputPoint[2] - translation[2];
+
+    // Then apply the inverse rotation (negative angle-axis)
+    T inverse_rotation[3];
+    inverse_rotation[0] = -rotation[0];
+    inverse_rotation[1] = -rotation[1];
+    inverse_rotation[2] = -rotation[2];
+
+    ceres::AngleAxisRotatePoint(inverse_rotation, temp, outputPoint);
+}
 
     /**
      * Converts the pose increment with rotation in SO3 notation and translation as 3D vector into
@@ -116,34 +142,23 @@ public:
 
     template <typename T>
     bool operator()(const T* const pose, T* residuals) const {
-        // Create PoseIncrement object to handle the transformation
-        PoseIncrement<T> poseIncrement(const_cast<T*>(pose));
-        
-        // Convert source point to templated type
-        T sourcePoint[3];
-        fillVector(m_sourcePoint, sourcePoint);
-        
-        // Convert target point to templated type
-        T targetPoint[3];
-        fillVector(m_targetPoint, targetPoint);
-        
-       
-        T transformedSourcePoint[3];
-        poseIncrement.apply(sourcePoint, transformedSourcePoint);
-        
-       
-        T sqrtWeight = T(sqrt(m_weight));
-        residuals[0] = sqrtWeight * (transformedSourcePoint[0] - targetPoint[0]);
-        residuals[1] = sqrtWeight * (transformedSourcePoint[1] - targetPoint[1]);
-        residuals[2] = sqrtWeight * (transformedSourcePoint[2] - targetPoint[2]);
-        
+        // TODO: Implemented the point-to-point cost function.
+        // The resulting 3D residual should be stored in residuals array. To apply the pose 
+        // increment (pose parameters) to the source point, you can use the PoseIncrement
+        // class.
+        // Important: Ceres automatically squares the cost function.
+
+        residuals[0] = T(0);
+		residuals[1] = T(0);
+		residuals[2] = T(0);
+
         return true;
     }
 
     static ceres::CostFunction* create(const Vector3f& sourcePoint, const Vector3f& targetPoint, const float weight) {
         return new ceres::AutoDiffCostFunction<PointToPointConstraint, 3, 6>(
             new PointToPointConstraint(sourcePoint, targetPoint, weight)
-        );
+            );
     }
 
 protected:
@@ -161,42 +176,23 @@ public:
         m_targetNormal{ targetNormal },
         m_weight{ weight }
     { }
-
-    template <typename T>
+template <typename T>
 bool operator()(const T* const pose, T* residuals) const {
-    // 1. Create a helper object to apply the pose transformation
-    PoseIncrement<T> poseIncrement(const_cast<T*>(pose));
+    T source_point[3];
+    fillVector(m_sourcePoint,source_point);
+    PoseIncrement<T> poseIncrement =PoseIncrement<T>(const_cast< T* const>(pose));
+    T sourcePointTransformed[3];
+    poseIncrement.apply(source_point,sourcePointTransformed);
 
-    // 2. Define the source point, target point, and target normal as templated arrays
-    T sourcePoint[3];
-    fillVector(m_sourcePoint, sourcePoint);
+    residuals[0]= T(LAMBDA) * T(m_weight) * (
+        (sourcePointTransformed[0] - T(m_targetPoint[0])) * T(m_targetNormal[0]) +
+        (sourcePointTransformed[1] - T(m_targetPoint[1])) * T(m_targetNormal[1]) +
+        (sourcePointTransformed[2] - T(m_targetPoint[2])) * T(m_targetNormal[2])
 
-    T targetPoint[3];
-    fillVector(m_targetPoint, targetPoint);
-
-    T targetNormal[3];
-    fillVector(m_targetNormal, targetNormal);
-    
-    // 3. Apply the current pose transformation to the source point
-    T transformedSourcePoint[3];
-    poseIncrement.apply(sourcePoint, transformedSourcePoint);
-
-    // 4. Calculate the difference vector between the transformed source and the target
-    T diff[3];
-    diff[0] = transformedSourcePoint[0] - targetPoint[0];
-    diff[1] = transformedSourcePoint[1] - targetPoint[1];
-    diff[2] = transformedSourcePoint[2] - targetPoint[2];
-
-    // 5. Calculate the residual: the dot product of the difference vector and the target normal
-    T dotProduct = diff[0] * targetNormal[0] + diff[1] * targetNormal[1] + diff[2] * targetNormal[2];
-
-    // 6. Apply the weight
-    T sqrtWeight = T(sqrt(m_weight));
-    residuals[0] = sqrtWeight * dotProduct;
-
+    );
     return true;
+
 }
-    }
 
     static ceres::CostFunction* create(const Vector3f& sourcePoint, const Vector3f& targetPoint, const Vector3f& targetNormal, const float weight) {
         return new ceres::AutoDiffCostFunction<PointToPlaneConstraint, 1, 6>(
@@ -212,14 +208,75 @@ protected:
     const float LAMBDA = 1.0f;
 };
 
+class SymmetricPointToPlaneConstraint {
+public:
+    SymmetricPointToPlaneConstraint(const Vector3f& sourcePoint, const Vector3f& targetPoint, 
+                                   const Vector3f& sourceNormal, const Vector3f& targetNormal, 
+                                   const float weight) :
+        m_sourcePoint{ sourcePoint },
+        m_targetPoint{ targetPoint },
+        m_sourceNormal{ sourceNormal },
+        m_targetNormal{ targetNormal },
+        m_weight{ weight }
+    { }
 
+    template <typename T>
+    bool operator()(const T* const pose, T* residuals) const {
+        T source_point[3];
+        fillVector(m_sourcePoint, source_point);
+        
+        T target_point[3];
+        fillVector(m_targetPoint, target_point);
+        
+        PoseIncrement<T> poseIncrement = PoseIncrement<T>(const_cast<T* const>(pose));
+        
+        T sourcePointTransformed[3];
+        poseIncrement.apply(source_point, sourcePointTransformed);
+        
+        T targetPointTransformed[3];
+        poseIncrement.applyInverse(target_point, targetPointTransformed);
+        
+        // First constraint: transformed source point to target plane
+        T residual1 = (sourcePointTransformed[0] - T(m_targetPoint[0])) * T(m_targetNormal[0]) +
+                      (sourcePointTransformed[1] - T(m_targetPoint[1])) * T(m_targetNormal[1]) +
+                      (sourcePointTransformed[2] - T(m_targetPoint[2])) * T(m_targetNormal[2]);
+        
+        // Second constraint: inverse-transformed target point to source plane  
+        T residual2 = (targetPointTransformed[0] - T(m_sourcePoint[0])) * T(m_sourceNormal[0]) +
+                      (targetPointTransformed[1] - T(m_sourcePoint[1])) * T(m_sourceNormal[1]) +
+                      (targetPointTransformed[2] - T(m_sourcePoint[2])) * T(m_sourceNormal[2]);
+        
+        residuals[0] = T(LAMBDA) * T(m_weight) * residual1;
+        residuals[1] = T(LAMBDA) * T(m_weight) * residual2;
+        
+        return true;
+    }
+
+    static ceres::CostFunction* create(const Vector3f& sourcePoint, const Vector3f& targetPoint, 
+                                      const Vector3f& sourceNormal, const Vector3f& targetNormal, 
+                                      const float weight) {
+        return new ceres::AutoDiffCostFunction<SymmetricPointToPlaneConstraint, 2, 6>(
+            new SymmetricPointToPlaneConstraint(sourcePoint, targetPoint, sourceNormal, targetNormal, weight)
+        );
+    }
+
+protected:
+    const Vector3f m_sourcePoint;
+    const Vector3f m_targetPoint;
+    const Vector3f m_sourceNormal;
+    const Vector3f m_targetNormal;
+    const float m_weight;
+    const float LAMBDA = 1.0f;
+};
+
+   
 /**
  * ICP optimizer - Abstract Base Class
  */
 class ICPOptimizer {
 public:
     ICPOptimizer() :
-        m_bUsePointToPlaneConstraints{ false },
+        m_bUsePointToPlaneConstraints{ true },
         m_nIterations{ 20 },
         m_nearestNeighborSearch{ std::make_unique<NearestNeighborSearchFlann>() }
     { }
@@ -272,7 +329,6 @@ protected:
 
     void pruneCorrespondences(const std::vector<Vector3f>& sourceNormals, const std::vector<Vector3f>& targetNormals, std::vector<Match>& matches) {
         const unsigned nPoints = sourceNormals.size();
-        int prunedCount = 0;
 
         for (unsigned i = 0; i < nPoints; i++) {
             Match& match = matches[i];
@@ -280,26 +336,12 @@ protected:
                 const auto& sourceNormal = sourceNormals[i];
                 const auto& targetNormal = targetNormals[match.idx];
 
-                // Check if normals are valid
-                if (!sourceNormal.allFinite() || !targetNormal.allFinite()) {
-                    match.idx = -1;
-                    prunedCount++;
-                    continue;
-                }
-
-                // Compute angle between normals (more lenient threshold)
-                float dotProduct = sourceNormal.dot(targetNormal);
-                float angle = acos(std::min(1.0f, std::max(-1.0f, dotProduct)));
+                // TODO: Invalidate the match (set it to -1) if the angle between the normals is greater than 60
+                if(sourceNormal.dot(targetNormal)< 0.5)
+                match.idx= -1;
                 
-                // Use a more lenient threshold (90 degrees instead of 60)
-                if (angle > M_PI / 2.0f) {
-                    match.idx = -1;
-                    prunedCount++;
-                }
             }
         }
-        
-        std::cout << "Pruned " << prunedCount << " correspondences due to normal angle." << std::endl;
     }
 };
 
@@ -391,8 +433,9 @@ private:
 
                 // TODO: Create a new point-to-point cost function and add it as constraint (i.e. residual block) 
                 // to the Ceres problem.
-                problem.AddResidualBlock(PointToPointConstraint::create(sourcePoint, targetPoint, 1.0f), nullptr, poseIncrement.getData());
-            
+
+                ceres::CostFunction* pointToPointCost = PointToPointConstraint::create(sourcePoint, targetPoint,1.0f);
+            problem.AddResidualBlock(pointToPointCost, nullptr, poseIncrement.getData());
 
 
                 if (m_bUsePointToPlaneConstraints) {
@@ -403,8 +446,8 @@ private:
 
                     // TODO: Create a new point-to-plane cost function and add it as constraint (i.e. residual block) 
                     // to the Ceres problem.
-                    problem.AddResidualBlock(PointToPlaneConstraint::create(sourcePoint, targetPoint, targetNormal, 1.0f), nullptr, poseIncrement.getData());
-
+                    ceres::CostFunction* pointToPlaneCost = PointToPlaneConstraint::create(sourcePoint, targetPoint, targetNormal,1.0f);
+                problem.AddResidualBlock(pointToPlaneCost, nullptr, poseIncrement.getData());
 
 
                 }
@@ -413,10 +456,197 @@ private:
     }
 };
 
-
 /**
  * ICP optimizer - using linear least-squares for optimization.
  */
+ 
+class SymmetricICPOptimizer : public ICPOptimizer {
+public:
+    /**
+     * @brief Constructor for SymmetricICPOptimizer.
+     * The base class ICPOptimizer's constructor will initialize m_nearestNeighborSearch.
+     */
+    SymmetricICPOptimizer() {}
+
+    /**
+     * @brief Destructor for SymmetricICPOptimizer.
+     * Default destructor is sufficient as m_nearestNeighborSearch is a unique_ptr
+     * managed by the base class.
+     */
+    ~SymmetricICPOptimizer() = default;
+
+    /**
+     * @brief Estimates the rigid body transformation (rotation and translation)
+     * from the source point cloud to the target point cloud using
+     * alternating symmetric linear ICP.
+     *
+     * @param source The source point cloud.
+     * @param target The target point cloud.
+     * @param transformation The initial guess for the transformation matrix (updated in place).
+     */
+    void estimatePose(const PointCloud& source, const PointCloud& target, Eigen::Matrix4f& transformation) override {
+        // The initial estimate can be given as an argument.
+        Eigen::Matrix4f estimatedPose = transformation;
+
+        for (int i = 0; i < m_nIterations; ++i) {
+            std::cout << "Symmetric ICP Iteration " << i + 1 << "/" << m_nIterations << std::endl;
+            clock_t begin = clock();
+
+            // 1. Transform source cloud to current estimated pose
+            auto transformedSourcePoints = transformPoints(source.getPoints(), estimatedPose);
+            auto transformedSourceNormals = transformNormals(source.getNormals(), estimatedPose);
+
+            // Vectors to store combined correspondences for the current iteration
+            std::vector<Eigen::Vector3f> combinedSourcePoints;
+            std::vector<Eigen::Vector3f> combinedSourceNormals; // NEW: To store normals corresponding to combinedSourcePoints
+            std::vector<Eigen::Vector3f> combinedTargetPoints;
+            std::vector<Eigen::Vector3f> combinedTargetNormals;
+
+            // --- A. Source-to-Target (S->T) Correspondences ---
+            std::cout << "  Matching S->T ..." << std::endl;
+            m_nearestNeighborSearch->buildIndex(target.getPoints()); // Build index on the static target cloud
+            auto matches_ST = m_nearestNeighborSearch->queryMatches(transformedSourcePoints);
+            // Prune using the normals of the query points (transformed source) and their matches (target)
+            pruneCorrespondences(transformedSourceNormals, target.getNormals(), matches_ST);
+
+            for (size_t j = 0; j < transformedSourcePoints.size(); ++j) {
+                const auto& match = matches_ST[j];
+                if (match.idx >= 0) {
+                    combinedSourcePoints.push_back(transformedSourcePoints[j]);
+                    combinedSourceNormals.push_back(transformedSourceNormals[j]); // Normal of transformed source point
+                    combinedTargetPoints.push_back(target.getPoints()[match.idx]);
+                    combinedTargetNormals.push_back(target.getNormals()[match.idx]); // Normal of target point
+                }
+            }
+
+            // --- B. Target-to-Source (T->S) Correspondences ---
+            std::cout << "  Matching T->S ..." << std::endl;
+            m_nearestNeighborSearch->buildIndex(transformedSourcePoints); // Build index on the transformed source cloud
+            auto matches_TS = m_nearestNeighborSearch->queryMatches(target.getPoints()); // Query from original target points
+            // Prune using the normals of the query points (original target) and their matches (transformed source)
+            pruneCorrespondences(target.getNormals(), transformedSourceNormals, matches_TS);
+
+            for (size_t j = 0; j < target.getPoints().size(); ++j) {
+                const auto& match = matches_TS[j];
+                if (match.idx >= 0) {
+                    // For T->S, the "source" point is from the original target cloud
+                    combinedSourcePoints.push_back(target.getPoints()[j]);
+                    combinedSourceNormals.push_back(target.getNormals()[j]); // Normal of original target point
+                    // The "target" point is from the transformed source cloud
+                    combinedTargetPoints.push_back(transformedSourcePoints[match.idx]);
+                    combinedTargetNormals.push_back(transformedSourceNormals[match.idx]); // Normal of transformed source point
+                }
+            }
+
+            clock_t end = clock();
+            double elapsedSecs = double(end - begin) / CLOCKS_PER_SEC;
+            std::cout << "  Correspondence matching completed in " << elapsedSecs << " seconds." << std::endl;
+            std::cout << "  Total combined correspondences: " << combinedSourcePoints.size() << std::endl;
+
+            // Check if we have enough correspondences
+            if (combinedSourcePoints.empty()) {
+                std::cout << "  No correspondences found. Stopping ICP." << std::endl;
+                break;
+            }
+
+            // Estimate the new pose (delta transformation) using Ceres for point-to-plane
+            Eigen::Matrix4f deltaPose;
+            if (m_bUsePointToPlaneConstraints) {
+                // Call the new Ceres-based optimization function
+                deltaPose = estimatePoseNonLinear(
+                    combinedSourcePoints,
+                    combinedTargetPoints,
+                    combinedSourceNormals, // Pass source normals for the constraint
+                    combinedTargetNormals
+                );
+            } else {
+                deltaPose = estimatePosePointToPoint(combinedSourcePoints, combinedTargetPoints);
+            }
+
+            // Apply the delta transformation to the current estimated pose
+            // deltaPose transforms points from the current estimated coordinate system.
+            estimatedPose = deltaPose * estimatedPose;
+
+            std::cout << "  Optimization iteration done. Current estimated pose: " << std::endl;
+            std::cout << estimatedPose << std::endl;
+        }
+
+        transformation = estimatedPose; // Update the reference argument with the final pose
+    }
+
+private:
+    Eigen::Matrix4f estimatePosePointToPoint(const std::vector<Eigen::Vector3f>& sourcePoints, const std::vector<Eigen::Vector3f>& targetPoints) {
+        ProcrustesAligner procrustAligner;
+        Eigen::Matrix4f estimatedPose = procrustAligner.estimatePose(sourcePoints, targetPoints);
+        return estimatedPose;
+    }
+
+    // New function: Estimates the pose increment using Ceres Solver for symmetric point-to-plane
+    Eigen::Matrix4f estimatePoseNonLinear(
+        const std::vector<Eigen::Vector3f>& sourcePoints,
+        const std::vector<Eigen::Vector3f>& targetPoints,
+        const std::vector<Eigen::Vector3f>& sourceNormals, // Normals corresponding to sourcePoints
+        const std::vector<Eigen::Vector3f>& targetNormals) {
+
+        // The pose_increment will be estimated by Ceres. It represents the transformation
+        // that moves points from the 'current' frame to the 'target' frame.
+        // It's a 6-element array: [angle_axis_x, angle_axis_y, angle_axis_z, tx, ty, tz]
+        double pose_increment[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // Initialize with identity (no transformation)
+
+        ceres::Problem problem;
+
+        // Add residual blocks for each correspondence
+        for (size_t i = 0; i < sourcePoints.size(); ++i) {
+            if (i >= sourceNormals.size() || i >= targetNormals.size()) {
+                // Should not happen if vectors are consistent, but good to check
+                continue;
+            }
+
+            ceres::CostFunction* cost_function =
+                SymmetricPointToPlaneConstraint::create(
+                    sourcePoints[i],
+                    targetPoints[i],
+                    sourceNormals[i],
+                    targetNormals[i],
+                    1.0 // Weight. Could be dynamic based on distance, normal alignment, etc.
+                );
+
+            problem.AddResidualBlock(cost_function,
+                                     new ceres::HuberLoss(0.1), // Robust loss function to handle outliers
+                                     pose_increment);
+        }
+
+        ceres::Solver::Options options;
+        options.linear_solver_type = ceres::DENSE_QR; // Or DENSE_SCHUR if you have structure
+        options.minimizer_progress_to_stdout = true; // See optimization progress
+        options.max_num_iterations = 50;            // Max inner iterations for Ceres
+        options.function_tolerance = 1e-6;          // Stop if reduction in cost is small
+        options.gradient_tolerance = 1e-10;
+        options.num_threads = 4; // Use multiple threads if compiled with TBB/OpenMP
+
+        ceres::Solver::Summary summary;
+        ceres::Solve(options, &problem, &summary);
+
+        // std::cout << summary.FullReport() << std::endl; // Uncomment for detailed Ceres report
+
+        // Convert the estimated pose_increment (angle-axis + translation) back to Eigen::Matrix4f
+        Eigen::Matrix4f deltaPose = Eigen::Matrix4f::Identity();
+
+        // Convert Angle-Axis (Rodrigues) to Rotation Matrix
+        Eigen::Vector3d angle_axis_vec(pose_increment[0], pose_increment[1], pose_increment[2]);
+        Eigen::Matrix3d rotation_matrix_double;
+        ceres::AngleAxisToRotationMatrix(angle_axis_vec.data(), rotation_matrix_double.data());
+
+        deltaPose.block<3, 3>(0, 0) = rotation_matrix_double.cast<float>();
+        deltaPose.block<3, 1>(0, 3) = Eigen::Vector3f(static_cast<float>(pose_increment[3]),
+                                                     static_cast<float>(pose_increment[4]),
+                                                     static_cast<float>(pose_increment[5]));
+
+        return deltaPose;
+    }
+};
+
+    
 class LinearICPOptimizer : public ICPOptimizer {
 public:
     LinearICPOptimizer() {}
@@ -472,6 +702,7 @@ public:
         initialPose = estimatedPose;
     }
 
+
 private:
     Matrix4f estimatePosePointToPoint(const std::vector<Vector3f>& sourcePoints, const std::vector<Vector3f>& targetPoints) {
         ProcrustesAligner procrustAligner;
@@ -481,54 +712,62 @@ private:
     }
 
     Matrix4f estimatePosePointToPlane(const std::vector<Vector3f>& sourcePoints, const std::vector<Vector3f>& targetPoints, const std::vector<Vector3f>& targetNormals) {
-        const unsigned nPoints = sourcePoints.size();
-    if (nPoints == 0) return Matrix4f::Identity();
+    const unsigned nPoints = sourcePoints.size();
 
-    // Build the system A*x = b for the equation (R*s + t - d) · n = 0
-    // Linearized for small rotation R ≈ I + [α,β,γ]x:
-    // ( (I + [α,β,γ]x)s + t - d ) · n = 0
-    // ( s + (α,β,γ) x s + t - d ) · n = 0
-    // ( (α,β,γ) x s ) · n + (t) · n = (d - s) · n
-    // [ (s x n)^T   n^T ] [α,β,γ,tx,ty,tz]^T = n · (d - s)
+    // Build the system
+    MatrixXf A = MatrixXf::Zero(4 * nPoints, 6);
+    VectorXf b = VectorXf::Zero(4 * nPoints);
 
-    MatrixXf A = MatrixXf::Zero(nPoints, 6);
-    VectorXf b = VectorXf::Zero(nPoints);
-
-    for (unsigned i = 0; i < nPoints; i++) {
-        const auto& s = sourcePoints[i];
+    for (unsigned i = 0; i < nPoints; ++i) {
+         const auto& s = sourcePoints[i];
         const auto& d = targetPoints[i];
-        // For a linear system, we need the normal of the *target* point from the original (non-transformed) cloud.
-        // However, since we don't have the original correspondences, we use the provided targetNormals list.
-        // This assumes targetNormals corresponds to targetPoints.
         const auto& n = targetNormals[i];
 
-        // Build the i-th row of matrix A
-        Vector<float, 6> A_row;
-        A_row.head<3>() = s.cross(n); // Part for rotation
-        A_row.tail<3>() = n;          // Part for translation
-        A.row(i) = A_row;
+        // 1000: Add the point-to-plane constraints to the system
+        A(4 * i, 0) = n.z() * s.y() - n.y() * s.z();
+        A(4 * i, 1) = n.x() * s.z() - n.z() * s.x();
+        A(4 * i, 2) = n.y() * s.x() - n.x() * s.y();
+        A.block<1, 3>(4 * i, 3) = n;
+        b(4 * i) = (d - s).dot(n);
 
-        // Build the i-th element of vector b
-        b(i) = n.dot(d - s);
+        // TODO: Add the point-to-point constraints to the system
+        A.block<3, 3>(4 * i + 1, 0) << 0.0f, s.z(), -s.y(),
+                                      -s.z(), 0.0f, s.x(),
+                                       s.y(), -s.x(), 0.0f;
+        A.block<3, 3>(4 * i + 1, 3).setIdentity();
+        b.segment<3>(4 * i + 1) = d - s;
     }
 
-    // TODO: Solve the system. Your original code for this was correct.
-    VectorXf x = A.colPivHouseholderQr().solve(b);
+    
 
-    // Extract rotation (α, β, γ) and translation (tx, ty, tz)
+    // Apply a higher weight to point-to-plane correspondences
+    float pointToPlaneWeight = 1.0f;
+    float pointToPointWeight = 0.1f;
+    A.block(0,0,4*nPoints,6) *= pointToPlaneWeight;
+    b.segment(0,4*nPoints) *= pointToPlaneWeight;
+
+    // TODO: Solve the system
+    MatrixXf ATA = A.transpose() * A;
+    VectorXf ATb = A.transpose() * b;
+
+    JacobiSVD<MatrixXf> svd(ATA, ComputeFullU | ComputeFullV);
+    VectorXf x = svd.solve(ATb);
+
+    // Build the pose matrix
     float alpha = x(0), beta = x(1), gamma = x(2);
-    Vector3f translation = x.tail<3>();
+    Matrix3f rotation = AngleAxisf(alpha, Vector3f::UnitX()).toRotationMatrix()
+                      * AngleAxisf(beta, Vector3f::UnitY()).toRotationMatrix()
+                      * AngleAxisf(gamma, Vector3f::UnitZ()).toRotationMatrix();
 
-    // Build the pose matrix from the small angle approximations
-    Matrix3f rotation;
-    rotation = AngleAxisf(gamma, Vector3f::UnitZ()) *
-               AngleAxisf(beta, Vector3f::UnitY()) *
-               AngleAxisf(alpha, Vector3f::UnitX());
 
     // TODO: Build the pose matrix. Your original code for this was also correct.
-    Matrix4f estimatedPose = Matrix4f::Identity();
-    estimatedPose.block<3, 3>(0, 0) = rotation;
-    estimatedPose.block<3, 1>(0, 3) = translation;
+   Vector3f translation=x.tail(3);
+
+   Matrix4f estimatedPose =Matrix4f::Identity();
+   estimatedPose.block<3,3>(0,0) =rotation;
+   estimatedPose.block<3,1>(0,3) =translation;
+
+
 
     return estimatedPose;
     }
@@ -597,16 +836,14 @@ struct PointToPlaneError {
         transformed_point_T[2] += pose_increment[5];
 
         // The difference vector between the target and the transformed source.
-        T diff[3] = {
-            T(target_point.x()) - transformed_point_T[0],
-            T(target_point.y()) - transformed_point_T[1],
-            T(target_point.z()) - transformed_point_T[2]
-        };
-
-        // The residual is the dot product of the difference with the target normal.
-        residuals[0] = T(target_normal.x()) * diff[0] +
-                       T(target_normal.y()) * diff[1] +
-                       T(target_normal.z()) * diff[2];
+T diff[3] = {
+    transformed_point_T[0] - T(target_point.x()),
+    transformed_point_T[1] - T(target_point.y()),
+    transformed_point_T[2] - T(target_point.z())
+};
+residuals[0] = T(target_normal.x()) * diff[0] +
+               T(target_normal.y()) * diff[1] +
+               T(target_normal.z()) * diff[2];
 
         return true;
     }
@@ -703,7 +940,7 @@ public:
             // 4. Configure and run the solver.
             ceres::Solver::Options options;
             options.linear_solver_type = ceres::DENSE_QR;
-            options.max_num_iterations = 20; // Increased iterations for robustness
+            options.max_num_iterations = 30; // Increased iterations for robustness
             options.minimizer_progress_to_stdout = false; // Set to true for detailed debug info
             
             ceres::Solver::Summary summary;
@@ -723,6 +960,11 @@ public:
                  std::cout << "Converged after " << i+1 << " iterations." << std::endl;
                  break;
             }
+            std::cout << "Solver iters: " << summary.iterations.size()
+          << ", init cost: " << summary.initial_cost
+          << ", final cost: " << summary.final_cost
+          << ", termination: " << summary.termination_type << "\n";
+
             std::cout << std::endl;
         }
 
@@ -759,111 +1001,185 @@ private:
     }
 };
 
-class SymmetricPointToPlaneConstraint {
-    public:
-        SymmetricPointToPlaneConstraint(
-            const Vector3f& sourcePoint, const Vector3f& sourceNormal,
-            const Vector3f& targetPoint, const Vector3f& targetNormal,
-            const float weight) :
-            m_sourcePoint{ sourcePoint },
-            m_sourceNormal{ sourceNormal },
-            m_targetPoint{ targetPoint },
-            m_targetNormal{ targetNormal },
-            m_weight{ weight }
-        { }
-    
-        template <typename T>
-        bool operator()(const T* const pose, T* residuals) const {
-            // Create PoseIncrement object to handle the transformation
-            PoseIncrement<T> poseIncrement(const_cast<T*>(pose));
-    
-            // Templated versions of input points and normals
-            T sourcePoint_T[3];
-            fillVector(m_sourcePoint, sourcePoint_T);
-    
-            T sourceNormal_T[3];
-            fillVector(m_sourceNormal, sourceNormal_T);
-    
-            T targetPoint_T[3];
-            fillVector(m_targetPoint, targetPoint_T);
-    
-            T targetNormal_T[3];
-            fillVector(m_targetNormal, targetNormal_T);
-    
-            // 1. Transform source point
-            T transformedSourcePoint[3];
-            poseIncrement.apply(sourcePoint_T, transformedSourcePoint);
-    
-            // 2. Transform source normal
-            T transformedSourceNormal[3];
-            poseIncrement.applyNormal(sourceNormal_T, transformedSourceNormal);
-            
-            // Normalize transformed source normal
-            T tsn_magnitude = ceres::sqrt(transformedSourceNormal[0]*transformedSourceNormal[0] + transformedSourceNormal[1]*transformedSourceNormal[1] + transformedSourceNormal[2]*transformedSourceNormal[2]);
-            if (tsn_magnitude < T(1e-9)) {
-                // Degenerate normal, return zero residual
-                residuals[0] = T(0);
-                return true;
-            }
-            T normalizedTransformedSourceNormal[3] = {
-                transformedSourceNormal[0] / tsn_magnitude,
-                transformedSourceNormal[1] / tsn_magnitude,
-                transformedSourceNormal[2] / tsn_magnitude
-            };
-    
-    
-            // Normalize target normal
-            T tn_magnitude = ceres::sqrt(targetNormal_T[0]*targetNormal_T[0] + targetNormal_T[1]*targetNormal_T[1] + targetNormal_T[2]*targetNormal_T[2]);
-            if (tn_magnitude < T(1e-9)) {
-                 // Degenerate normal, return zero residual
-                residuals[0] = T(0);
-                return true;
-            }
-            T normalizedTargetNormal[3] = {
-                targetNormal_T[0] / tn_magnitude,
-                targetNormal_T[1] / tn_magnitude,
-                targetNormal_T[2] / tn_magnitude
-            };
-    
-            // 3. Calculate difference vector
-            T diff[3];
-            diff[0] = transformedSourcePoint[0] - targetPoint_T[0];
-            diff[1] = transformedSourcePoint[1] - targetPoint_T[1];
-            diff[2] = transformedSourcePoint[2] - targetPoint_T[2];
-    
-            // 4. Calculate combined normal (n_p + n_q)
-            T combinedNormal[3];
-            combinedNormal[0] = normalizedTransformedSourceNormal[0] + normalizedTargetNormal[0];
-            combinedNormal[1] = normalizedTransformedSourceNormal[1] + normalizedTargetNormal[1];
-            combinedNormal[2] = normalizedTransformedSourceNormal[2] + normalizedTargetNormal[2];
-    
-            // 5. Calculate residual: (transformed_source_point - target_point) . (transformed_source_normal + target_normal)
-            T dotProduct = diff[0] * combinedNormal[0] +
-                           diff[1] * combinedNormal[1] +
-                           diff[2] * combinedNormal[2];
-    
-            // 6. Apply the weight
-            T sqrtWeight = T(sqrt(m_weight));
-            residuals[0] = sqrtWeight * dotProduct;
-    
-            return true;
+class AlternatingSymmetricICPOptimizer : public ICPOptimizer {
+public:
+    AlternatingSymmetricICPOptimizer() {}
+    ~AlternatingSymmetricICPOptimizer() = default;
+
+    void estimatePose(const PointCloud& source, const PointCloud& target, Eigen::Matrix4f& transformation) override {
+        Eigen::Matrix4f estimatedPose = transformation;
+
+        for (int i = 0; i < m_nIterations; ++i) {
+            std::cout << "Alternating Symmetric ICP Iteration " << i + 1 << "/" << m_nIterations << std::endl;
+            clock_t iterStart = clock();
+
+            // --- STEP 1: Source-to-Target Optimization ---
+            std::cout << "  Step 1: Optimizing S->T..." << std::endl;
+            Eigen::Matrix4f deltaT1 = optimizeSourceToTarget(source, target, estimatedPose);
+            estimatedPose = deltaT1 * estimatedPose;
+
+            // --- STEP 2: Target-to-Source Optimization ---  
+            std::cout << "  Step 2: Optimizing T->S..." << std::endl;
+            Eigen::Matrix4f deltaT2 = optimizeTargetToSource(source, target, estimatedPose);
+            // Apply inverse since we optimized T->S but need S->T transformation
+            estimatedPose = deltaT2.inverse() * estimatedPose;
+
+            clock_t iterEnd = clock();
+            double elapsedSecs = double(iterEnd - iterStart) / CLOCKS_PER_SEC;
+            std::cout << "  Iteration " << i + 1 << " completed in " << elapsedSecs << " seconds." << std::endl;
+            std::cout << "  Current estimated pose:" << std::endl;
+            std::cout << estimatedPose << std::endl;
         }
-    
-        static ceres::CostFunction* create(
-            const Vector3f& sourcePoint, const Vector3f& sourceNormal,
-            const Vector3f& targetPoint, const Vector3f& targetNormal,
-            const float weight) {
-            return new ceres::AutoDiffCostFunction<SymmetricPointToPlaneConstraint, 1, 6>(
-                new SymmetricPointToPlaneConstraint(sourcePoint, sourceNormal, targetPoint, targetNormal, weight)
-            );
+
+        transformation = estimatedPose;
+    }
+
+private:
+    // Optimize Source-to-Target: Find transformation that moves source points to target
+    Eigen::Matrix4f optimizeSourceToTarget(const PointCloud& source, const PointCloud& target, 
+                                          const Eigen::Matrix4f& currentPose) {
+        // Transform source points with current pose
+        auto transformedSourcePoints = transformPoints(source.getPoints(), currentPose);
+        auto transformedSourceNormals = transformNormals(source.getNormals(), currentPose);
+
+        // Find correspondences: transformed source -> target
+        m_nearestNeighborSearch->buildIndex(target.getPoints());
+        auto matches = m_nearestNeighborSearch->queryMatches(transformedSourcePoints);
+        
+        // Prune correspondences based on normal compatibility
+        pruneCorrespondences(transformedSourceNormals, target.getNormals(), matches);
+
+        // Collect valid correspondences
+        std::vector<Eigen::Vector3f> sourcePoints, targetPoints;
+        std::vector<Eigen::Vector3f> sourceNormals, targetNormals;
+        
+        for (size_t j = 0; j < transformedSourcePoints.size(); ++j) {
+            const auto& match = matches[j];
+            if (match.idx >= 0) {
+                sourcePoints.push_back(transformedSourcePoints[j]);
+                sourceNormals.push_back(transformedSourceNormals[j]);
+                targetPoints.push_back(target.getPoints()[match.idx]);
+                targetNormals.push_back(target.getNormals()[match.idx]);
+            }
         }
-    
-    protected:
-        const Vector3f m_sourcePoint;
-        const Vector3f m_sourceNormal;
-        const Vector3f m_targetPoint;
-        const Vector3f m_targetNormal;
-        const float m_weight;
-    };
-    
-    
+
+        std::cout << "    S->T correspondences: " << sourcePoints.size() << std::endl;
+
+        if (sourcePoints.empty()) {
+            std::cout << "    No S->T correspondences found, returning identity." << std::endl;
+            return Eigen::Matrix4f::Identity();
+        }
+
+        // Optimize pose increment
+        if (m_bUsePointToPlaneConstraints) {
+            return estimatePoseNonLinear(sourcePoints, targetPoints, sourceNormals, targetNormals);
+        } else {
+            return estimatePosePointToPoint(sourcePoints, targetPoints);
+        }
+    }
+
+    // Optimize Target-to-Source: Find transformation that moves target points to source
+    Eigen::Matrix4f optimizeTargetToSource(const PointCloud& source, const PointCloud& target, 
+                                          const Eigen::Matrix4f& currentPose) {
+        // Transform source points with current pose (this is our "reference" now)
+        auto transformedSourcePoints = transformPoints(source.getPoints(), currentPose);
+        auto transformedSourceNormals = transformNormals(source.getNormals(), currentPose);
+
+        // Find correspondences: target -> transformed source
+        m_nearestNeighborSearch->buildIndex(transformedSourcePoints);
+        auto matches = m_nearestNeighborSearch->queryMatches(target.getPoints());
+        
+        // Prune correspondences based on normal compatibility
+        pruneCorrespondences(target.getNormals(), transformedSourceNormals, matches);
+
+        // Collect valid correspondences
+        std::vector<Eigen::Vector3f> sourcePoints, targetPoints;
+        std::vector<Eigen::Vector3f> sourceNormals, targetNormals;
+        
+        for (size_t j = 0; j < target.getPoints().size(); ++j) {
+            const auto& match = matches[j];
+            if (match.idx >= 0) {
+                // For T->S optimization: target is "source", transformed source is "target"
+                sourcePoints.push_back(target.getPoints()[j]);
+                sourceNormals.push_back(target.getNormals()[j]);
+                targetPoints.push_back(transformedSourcePoints[match.idx]);
+                targetNormals.push_back(transformedSourceNormals[match.idx]);
+            }
+        }
+
+        std::cout << "    T->S correspondences: " << sourcePoints.size() << std::endl;
+
+        if (sourcePoints.empty()) {
+            std::cout << "    No T->S correspondences found, returning identity." << std::endl;
+            return Eigen::Matrix4f::Identity();
+        }
+
+        // Optimize pose increment (this gives us the T->S transformation)
+        if (m_bUsePointToPlaneConstraints) {
+            return estimatePoseNonLinear(sourcePoints, targetPoints, sourceNormals, targetNormals);
+        } else {
+            return estimatePosePointToPoint(sourcePoints, targetPoints);
+        }
+    }
+
+    Eigen::Matrix4f estimatePosePointToPoint(const std::vector<Eigen::Vector3f>& sourcePoints, 
+                                           const std::vector<Eigen::Vector3f>& targetPoints) {
+        ProcrustesAligner procrustAligner;
+        return procrustAligner.estimatePose(sourcePoints, targetPoints);
+    }
+
+    Eigen::Matrix4f estimatePoseNonLinear(const std::vector<Eigen::Vector3f>& sourcePoints,
+                                         const std::vector<Eigen::Vector3f>& targetPoints,
+                                         const std::vector<Eigen::Vector3f>& sourceNormals,
+                                         const std::vector<Eigen::Vector3f>& targetNormals) {
+        
+        // Use regular point-to-plane constraints (not symmetric)
+        double pose_increment[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        ceres::Problem problem;
+
+        for (size_t i = 0; i < sourcePoints.size(); ++i) {
+            if (i >= targetNormals.size()) continue;
+
+            // Use standard point-to-plane constraint
+            ceres::CostFunction* cost_function =
+                PointToPlaneConstraint::create(
+                    sourcePoints[i],
+                    targetPoints[i],
+                    targetNormals[i],  // Use target normal for the plane
+                    1.0
+                );
+
+            problem.AddResidualBlock(cost_function,
+                                   new ceres::HuberLoss(0.1),
+                                   pose_increment);
+        }
+
+        ceres::Solver::Options options;
+        options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
+        options.minimizer_progress_to_stdout = false; // Reduce output
+        options.max_num_iterations = 25;
+        options.function_tolerance = 1e-6;
+        options.gradient_tolerance = 1e-10;
+        options.num_threads = 4;
+
+        ceres::Solver::Summary summary;
+        ceres::Solve(options, &problem, &summary);
+
+        // Convert result to transformation matrix
+        Eigen::Matrix4f deltaPose = Eigen::Matrix4f::Identity();
+        
+        Eigen::Vector3d angle_axis_vec(pose_increment[0], pose_increment[1], pose_increment[2]);
+        Eigen::Matrix3d rotation_matrix_double;
+        ceres::AngleAxisToRotationMatrix(angle_axis_vec.data(), rotation_matrix_double.data());
+
+        deltaPose.block<3, 3>(0, 0) = rotation_matrix_double.cast<float>();
+        deltaPose.block<3, 1>(0, 3) = Eigen::Vector3f(
+            static_cast<float>(pose_increment[3]),
+            static_cast<float>(pose_increment[4]),
+            static_cast<float>(pose_increment[5])
+        );
+
+        return deltaPose;
+    }
+};
+

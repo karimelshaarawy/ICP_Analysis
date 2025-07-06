@@ -26,9 +26,11 @@
 
 #define SHOW_BUNNY_CORRESPONDENCES 0
 
-#define USE_POINT_TO_PLANE	1
-#define USE_LINEAR_ICP		0
-#define USE_LM_ICP			1
+#define USE_POINT_TO_PLANE  1
+#define USE_LINEAR_ICP      0
+#define USE_LM_ICP          0
+#define USE_SYMMETRIC_ICP   1 // Set to 1 to use Symmetric ICP
+
 
 #define RUN_SHAPE_ICP		0
 #define RUN_SEQUENCE_ICP	1
@@ -107,7 +109,7 @@ int alignBunnyWithICP() {
 	}
 	else {
 		std::cout << "Using Ceres ICP Optimizer" << std::endl;
-		optimizer = new CeresICPOptimizer();
+		optimizer = new AlternatingSymmetricICPOptimizer();
 	}
 	
 	optimizer->setMatchingMaxDistance(0.0003f);
@@ -145,6 +147,8 @@ int alignBunnyWithICP() {
 }
 
 int reconstructRoom() {
+		std::cout << "lolo..." << std::endl;
+
 	std::string filenameIn = std::string("../../../Data/rgbd_dataset_freiburg1_xyz/");
 	std::string filenameBaseOut = std::string("mesh_");
 
@@ -162,38 +166,42 @@ int reconstructRoom() {
 	
 	// Setup the optimizer.
 	ICPOptimizer* optimizer = nullptr;
-	if (USE_LINEAR_ICP) {
-		std::cout << "Using Linear ICP Optimizer for room reconstruction" << std::endl;
-		optimizer = new LinearICPOptimizer();
-	}
-	else if (USE_LM_ICP) {
-		std::cout << "Using Levenberg-Marquardt ICP Optimizer for room reconstruction" << std::endl;
-		optimizer = new LevenbergMarquardtICPOptimizer();
-		// Configure LM-specific parameters for room reconstruction
-		LevenbergMarquardtICPOptimizer* lmOptimizer = static_cast<LevenbergMarquardtICPOptimizer*>(optimizer);
-	}
-	else {
-		std::cout << "Using Ceres ICP Optimizer for room reconstruction" << std::endl;
-		optimizer = new CeresICPOptimizer();
-	}
+	#if USE_SYMMETRIC_ICP
+    std::cout << "Using Symmetric ICP Optimizer" << std::endl;
+    optimizer = new AlternatingSymmetricICPOptimizer();
+#elif USE_LINEAR_ICP
+    std::cout << "Using Linear ICP Optimizer" << std::endl;
+    optimizer = new LinearICPOptimizer();
+#elif USE_LM_ICP
+    std::cout << "Using Levenberg-Marquardt ICP Optimizer" << std::endl;
+    optimizer = new LevenbergMarquardtICPOptimizer();
+    // Configure LM-specific parameters if needed (uncomment and adjust)
+    // LevenbergMarquardtICPOptimizer* lmOptimizer = static_cast<LevenbergMarquardtICPOptimizer*>(optimizer);
+    // lmOptimizer->setNbOfIterations(5); // Fewer iterations per ICP step
+    // lmOptimizer->setLambda(0.01f);      // More lenient threshold
+    // lmOptimizer->setNbOfICPIterations(5); // Fewer ICP iterations
+#else
+    std::cout << "Using Ceres ICP Optimizer" << std::endl;
+    optimizer = new CeresICPOptimizer();
+#endif
 
-	optimizer->setMatchingMaxDistance(0.1f);
-	if (USE_POINT_TO_PLANE) {
-		optimizer->usePointToPlaneConstraints(true);
-		optimizer->setNbOfIterations(20);
-	}
-	else {
-		optimizer->usePointToPlaneConstraints(false);
-		optimizer->setNbOfIterations(20);
-	}
-
+    // Set common optimizer parameters
+    optimizer->setMatchingMaxDistance(0.0003f);
+    if (USE_POINT_TO_PLANE) {
+        optimizer->usePointToPlaneConstraints(true);
+        optimizer->setNbOfIterations(40);
+    }
+    else {
+        optimizer->usePointToPlaneConstraints(false);
+        optimizer->setNbOfIterations(40);
+    }
 	// We store the estimated camera poses.
 	std::vector<Matrix4f> estimatedPoses;
 	Matrix4f currentCameraToWorld = Matrix4f::Identity();
 	estimatedPoses.push_back(currentCameraToWorld.inverse());
 
 	int i = 0;
-	const int iMax = 25;
+	const int iMax = 22;
 	while (sensor.processNextFrame() && i <= iMax) {
 		float* depthMap = sensor.getDepth();
 		Matrix3f depthIntrinsics = sensor.getDepthIntrinsics();
