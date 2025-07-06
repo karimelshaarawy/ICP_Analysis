@@ -173,7 +173,6 @@ protected:
     const Vector3f m_sourcePoint;
     const Vector3f m_targetPoint;
     const float m_weight;
-    const float LAMBDA = 0.1f;
 };
 
 class PointToPlaneConstraint {
@@ -181,26 +180,25 @@ public:
     PointToPlaneConstraint(const Vector3f& sourcePoint, const Vector3f& targetPoint, const Vector3f& targetNormal, const float weight) :
         m_sourcePoint{ sourcePoint },
         m_targetPoint{ targetPoint },
-        m_targetNormal{ targetNormal },
+        m_targetNormal{ targetNormal.normalized() },
         m_weight{ weight }
     { }
-template <typename T>
-bool operator()(const T* const pose, T* residuals) const {
-    T source_point[3];
-    fillVector(m_sourcePoint,source_point);
-    PoseIncrement<T> poseIncrement =PoseIncrement<T>(const_cast< T* const>(pose));
-    T sourcePointTransformed[3];
-    poseIncrement.apply(source_point,sourcePointTransformed);
 
-    residuals[0]= T(LAMBDA) * T(m_weight) * (
-        (sourcePointTransformed[0] - T(m_targetPoint[0])) * T(m_targetNormal[0]) +
-        (sourcePointTransformed[1] - T(m_targetPoint[1])) * T(m_targetNormal[1]) +
-        (sourcePointTransformed[2] - T(m_targetPoint[2])) * T(m_targetNormal[2])
+    template <typename T>
+    bool operator()(const T* const pose, T* residuals) const {
+        T source_point[3];
+        fillVector(m_sourcePoint,source_point);
+        PoseIncrement<T> poseIncrement =PoseIncrement<T>(const_cast< T* const>(pose));
+        T sourcePointTransformed[3];
+        poseIncrement.apply(source_point,sourcePointTransformed);
 
-    );
-    return true;
-
-}
+        residuals[0]= T(m_weight) * (
+            (sourcePointTransformed[0] - T(m_targetPoint[0])) * T(m_targetNormal[0]) +
+            (sourcePointTransformed[1] - T(m_targetPoint[1])) * T(m_targetNormal[1]) +
+            (sourcePointTransformed[2] - T(m_targetPoint[2])) * T(m_targetNormal[2])
+        );
+        return true;
+    }
 
     static ceres::CostFunction* create(const Vector3f& sourcePoint, const Vector3f& targetPoint, const Vector3f& targetNormal, const float weight) {
         return new ceres::AutoDiffCostFunction<PointToPlaneConstraint, 1, 6>(
@@ -224,7 +222,6 @@ void applyPoseTransformation(const T* pose_matrix, const T* point, T* result) co
     const Vector3f m_targetPoint;
     const Vector3f m_targetNormal;
     const float m_weight;
-    const float LAMBDA = 1.0f;
 };
 
 class SymmetricPointToPlaneConstraint {
@@ -234,8 +231,8 @@ public:
                                    const float weight) :
         m_sourcePoint{ sourcePoint },
         m_targetPoint{ targetPoint },
-        m_sourceNormal{ sourceNormal },
-        m_targetNormal{ targetNormal },
+        m_sourceNormal{ sourceNormal.normalized() },
+        m_targetNormal{ targetNormal.normalized() },
         m_weight{ weight }
     { }
 
@@ -265,8 +262,8 @@ public:
                       (targetPointTransformed[1] - T(m_sourcePoint[1])) * T(m_sourceNormal[1]) +
                       (targetPointTransformed[2] - T(m_sourcePoint[2])) * T(m_sourceNormal[2]);
         
-        residuals[0] = T(LAMBDA) * T(m_weight) * residual1;
-        residuals[1] = T(LAMBDA) * T(m_weight) * residual2;
+        residuals[0] = T(m_weight) * residual1;
+        residuals[1] = T(m_weight) * residual2;
         
         return true;
     }
@@ -285,7 +282,6 @@ protected:
     const Vector3f m_sourceNormal;
     const Vector3f m_targetNormal;
     const float m_weight;
-    const float LAMBDA = 1.0f;
 };
 
    
@@ -925,34 +921,32 @@ public:
                 Vector3d target_pt = target_pt_f.cast<double>();
                 Vector3d target_normal = target_normal_f.cast<double>();
 
-                // *** POINT-TO-PLANE FIX: ***
-                // The point-to-plane error metric requires the normal to be a unit vector.
-                // We normalize it here to ensure the cost function is correctly scaled.
-                if (m_bUsePointToPlaneConstraints) {
-                    target_normal.normalize();
-                }
                 ceres::CostFunction* cost_function;
                 if (m_bUsePointToPlaneConstraints) {
+                    // Use both point-to-point and point-to-plane constraints for better convergence
+                    // Point-to-point constraint
+                    problem.AddResidualBlock(
+                        new ceres::AutoDiffCostFunction<PointToPointConstraint, 3, 6>(
+                            new PointToPointConstraint(source_pt_f, target_pt_f, 1.0f)
+                        ),
+                        nullptr, pose_increment
+                    );
                     
-
-                    cost_function = PointToPlaneConstraint::create(
-                        source_pt_f,
-                        target_pt_f,
-                        target_normal_f,
-                        1.0f // Weight can be adjusted or made adaptive.
+                    // Point-to-plane constraint
+                    problem.AddResidualBlock(
+                        new ceres::AutoDiffCostFunction<PointToPlaneConstraint, 1, 6>(
+                            new PointToPlaneConstraint(source_pt_f, target_pt_f, target_normal_f, 1.0f)
+                        ),
+                        nullptr, pose_increment
                     );
                 } else {
                     // Keep using PointToPointError if needed
+                    std::cout << "Using PointToPointError" << std::endl;
                      cost_function = new ceres::AutoDiffCostFunction<PointToPointError, 3, 6>(
                         new PointToPointError(source_pt, target_pt)
                     );
+                     problem.AddResidualBlock(cost_function, nullptr, pose_increment);
                 }
-                
-                // *** ROBUSTNESS IMPROVEMENT: ***
-                // Use a loss function to reduce the influence of outlier correspondences.
-                // CauchyLoss is a good general-purpose choice.
-                ceres::LossFunction* loss_function = new ceres::CauchyLoss(1.0);
-                problem.AddResidualBlock(cost_function, loss_function, pose_increment);
                
             }
             
