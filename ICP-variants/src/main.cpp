@@ -26,10 +26,10 @@
 
 #define SHOW_BUNNY_CORRESPONDENCES 0
 
-#define USE_POINT_TO_PLANE  1
+#define USE_POINT_TO_PLANE  0
 #define USE_LINEAR_ICP      0
-#define USE_LM_ICP          1
-#define USE_SYMMETRIC_ICP   0 // Set to 1 to use Symmetric ICP
+#define USE_LM_ICP          0
+#define USE_SYMMETRIC_ICP   1 // Set to 1 to use Symmetric ICP
 
 
 #define RUN_SHAPE_ICP		0
@@ -115,11 +115,11 @@ int alignBunnyWithICP() {
 	optimizer->setMatchingMaxDistance(0.0003f);
 	if (USE_POINT_TO_PLANE) {
 		optimizer->usePointToPlaneConstraints(true);
-		optimizer->setNbOfIterations(20);
+		optimizer->setNbOfIterations(10);
 	}
 	else {
 		optimizer->usePointToPlaneConstraints(false);
-		optimizer->setNbOfIterations(20);
+		optimizer->setNbOfIterations(10);
 	}
 
 	PointCloud source{ sourceMesh };
@@ -162,8 +162,8 @@ int reconstructRoom() {
 
 	// We store a first frame as a reference frame. All next frames are tracked relatively to the first frame.
 	sensor.processNextFrame();
-	PointCloud target{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight() };
-	
+	PointCloud target{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(),4};
+
 	// Setup the optimizer.
 	ICPOptimizer* optimizer = nullptr;
 	#if USE_SYMMETRIC_ICP
@@ -189,11 +189,11 @@ int reconstructRoom() {
     optimizer->setMatchingMaxDistance(0.0003f);
     if (USE_POINT_TO_PLANE) {
         optimizer->usePointToPlaneConstraints(true);
-        optimizer->setNbOfIterations(40);
+        optimizer->setNbOfIterations(15);
     }
     else {
         optimizer->usePointToPlaneConstraints(false);
-        optimizer->setNbOfIterations(40);
+        optimizer->setNbOfIterations(15);
     }
 	// We store the estimated camera poses.
 	std::vector<Matrix4f> estimatedPoses;
@@ -209,7 +209,7 @@ int reconstructRoom() {
 
 		// Estimate the current camera pose from source to target mesh with ICP optimization.
 		// We downsample the source image to speed up the correspondence matching.
-		PointCloud source{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 8 };
+		PointCloud source{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
 		optimizer->estimatePose(source, target, currentCameraToWorld);
 		
 		// Invert the transformation matrix to get the current camera pose.
