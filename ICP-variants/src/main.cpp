@@ -13,15 +13,20 @@
  * Choose one of the following ICP implementations:
  * - USE_LINEAR_ICP = 1: Uses LinearICPOptimizer (fast, works well for small rotations)
  * - USE_LM_ICP = 1: Uses LevenbergMarquardtICPOptimizer (robust, handles large rotations)
- * - Both = 0: Uses CeresICPOptimizer (default, most robust but requires Ceres)
+ * - USE_SYMMETRIC_ICP = 1: Uses AlternatingSymmetricICPOptimizer (symmetric approach)
+ * - All = 0: Uses CeresICPOptimizer (default, most robust but requires Ceres)
  * 
  * Constraint Type:
  * - USE_POINT_TO_PLANE = 1: Uses point-to-plane constraints (usually better for surfaces)
  * - USE_POINT_TO_PLANE = 0: Uses point-to-point constraints (faster, works well for point clouds)
  * 
+ * Colored ICP:
+ * - USE_COLORED_ICP = 1: Uses color information in addition to geometry for better alignment
+ * - USE_COLORED_ICP = 0: Uses only geometric information (faster)
+ * 
  * Examples:
  * - For bunny alignment with LM-ICP and point-to-plane: USE_LM_ICP=1, USE_POINT_TO_PLANE=1
- * - For room reconstruction with linear ICP: USE_LINEAR_ICP=1, USE_POINT_TO_PLANE=0
+ * - For room reconstruction with colored symmetric ICP: USE_SYMMETRIC_ICP=1, USE_POINT_TO_PLANE=1, USE_COLORED_ICP=1
  */
 
 #define SHOW_BUNNY_CORRESPONDENCES 0
@@ -30,6 +35,7 @@
 #define USE_LINEAR_ICP      0
 #define USE_LM_ICP          0
 #define USE_SYMMETRIC_ICP   1 // Set to 1 to use Symmetric ICP
+#define USE_COLORED_ICP     1 // Set to 1 to use Colored ICP
 
 
 #define RUN_SHAPE_ICP		0
@@ -162,7 +168,13 @@ int reconstructRoom() {
 
 	// We store a first frame as a reference frame. All next frames are tracked relatively to the first frame.
 	sensor.processNextFrame();
-	PointCloud target{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(),4};
+	PointCloud target;
+	if (USE_COLORED_ICP) {
+		target = PointCloud{ sensor.getDepth(), sensor.getColorRGBX(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(),
+		                    sensor.getColorIntrinsics(), sensor.getColorExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+	} else {
+		target = PointCloud{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+	}
 
 	// Setup the optimizer.
 	ICPOptimizer* optimizer = nullptr;
@@ -195,6 +207,12 @@ int reconstructRoom() {
         optimizer->usePointToPlaneConstraints(false);
         optimizer->setNbOfIterations(15);
     }
+    
+    // Enable colored ICP if flag is set
+    if (USE_COLORED_ICP) {
+        optimizer->useColoredICP(true);
+        std::cout << "Colored ICP enabled" << std::endl;
+    }
 	// We store the estimated camera poses.
 	std::vector<Matrix4f> estimatedPoses;
 	Matrix4f currentCameraToWorld = Matrix4f::Identity();
@@ -209,7 +227,13 @@ int reconstructRoom() {
 
 		// Estimate the current camera pose from source to target mesh with ICP optimization.
 		// We downsample the source image to speed up the correspondence matching.
-		PointCloud source{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+		PointCloud source;
+		if (USE_COLORED_ICP) {
+			source = PointCloud{ sensor.getDepth(), sensor.getColorRGBX(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(),
+			                    sensor.getColorIntrinsics(), sensor.getColorExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+		} else {
+			source = PointCloud{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+		}
 		
 		// Get ground truth pose from sensor
 		Matrix4f groundTruthPose = sensor.getTrajectory();

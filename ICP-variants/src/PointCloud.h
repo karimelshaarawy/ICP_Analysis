@@ -14,8 +14,15 @@ public:
 
         // Copy vertices.
         m_points.reserve(nVertices);
+        m_colors.reserve(nVertices);
         for (const auto& vertex : vertices) {
             m_points.push_back(Vector3f{ vertex.position.x(), vertex.position.y(), vertex.position.z() });
+            // Convert color from Vector4uc to Vector3f (RGB)
+            m_colors.push_back(Vector3f{ 
+                static_cast<float>(vertex.color.x()) / 255.0f,
+                static_cast<float>(vertex.color.y()) / 255.0f,
+                static_cast<float>(vertex.color.z()) / 255.0f
+            });
         }
 
         // Compute normals (as an average of triangle normals).
@@ -33,7 +40,9 @@ public:
         }
     }
 
-    PointCloud(float* depthMap, const Matrix3f& depthIntrinsics, const Matrix4f& depthExtrinsics, const unsigned width, const unsigned height, unsigned downsampleFactor = 1, float maxDistance = 0.1f) {
+    PointCloud(float* depthMap, const Matrix3f& depthIntrinsics, const Matrix4f& depthExtrinsics, const unsigned width, const unsigned height, unsigned downsampleFactor = 1, float maxDistance = 0.1f)
+        : m_colors() // Initialize colors vector
+    {
         // Get depth intrinsics.
         float fovX = depthIntrinsics(0, 0);
         float fovY = depthIntrinsics(1, 1);
@@ -102,6 +111,7 @@ public:
         const unsigned nPoints = pointsTmp.size();
         m_points.reserve(std::floor(float(nPoints) / downsampleFactor));
         m_normals.reserve(std::floor(float(nPoints) / downsampleFactor));
+        m_colors.reserve(std::floor(float(nPoints) / downsampleFactor));
 
         for (int i = 0; i < nPoints; i = i + downsampleFactor) {
             const auto& point = pointsTmp[i];
@@ -110,6 +120,107 @@ public:
             if (point.allFinite() && normal.allFinite()) {
                 m_points.push_back(point);
                 m_normals.push_back(normal);
+                // Default color (gray) for depth-based point clouds
+                m_colors.push_back(Vector3f(0.5f, 0.5f, 0.5f));
+            }
+        }
+    }
+
+    // Constructor with color information
+    PointCloud(float* depthMap, BYTE* colorMap, const Matrix3f& depthIntrinsics, const Matrix4f& depthExtrinsics, 
+               const Matrix3f& colorIntrinsics, const Matrix4f& colorExtrinsics,
+               const unsigned width, const unsigned height, unsigned downsampleFactor = 1, float maxDistance = 0.1f)
+        : m_colors()
+    {
+        // Get depth intrinsics.
+        float fovX = depthIntrinsics(0, 0);
+        float fovY = depthIntrinsics(1, 1);
+        float cX = depthIntrinsics(0, 2);
+        float cY = depthIntrinsics(1, 2);
+        const float maxDistanceHalved = maxDistance / 2.f;
+
+        // Compute inverse depth extrinsics.
+        Matrix4f depthExtrinsicsInv = depthExtrinsics.inverse();
+        Matrix3f rotationInv = depthExtrinsicsInv.block(0, 0, 3, 3);
+        Vector3f translationInv = depthExtrinsicsInv.block(0, 3, 3, 1);
+
+        // Back-project the pixel depths into the camera space.
+        std::vector<Vector3f> pointsTmp(width * height);
+        std::vector<Vector3f> colorsTmp(width * height);
+
+        // For every pixel row.
+#pragma omp parallel for
+        for (int v = 0; v < height; ++v) {
+            // For every pixel in a row.
+            for (int u = 0; u < width; ++u) {
+                unsigned int idx = v * width + u; // linearized index
+                float depth = depthMap[idx];
+                if (depth == MINF) {
+                    pointsTmp[idx] = Vector3f(MINF, MINF, MINF);
+                    colorsTmp[idx] = Vector3f(0.0f, 0.0f, 0.0f);
+                }
+                else {
+                    // Back-projection to camera space.
+                    pointsTmp[idx] = rotationInv * Vector3f((u - cX) / fovX * depth, (v - cY) / fovY * depth, depth) + translationInv;
+                    
+                    // Get color from color map
+                    unsigned int colorIdx = 4 * idx; // RGBX format
+                    colorsTmp[idx] = Vector3f(
+                        static_cast<float>(colorMap[colorIdx]) / 255.0f,
+                        static_cast<float>(colorMap[colorIdx + 1]) / 255.0f,
+                        static_cast<float>(colorMap[colorIdx + 2]) / 255.0f
+                    );
+                }
+            }
+        }
+
+        // We need to compute derivatives and then the normalized normal vector (for valid pixels).
+        std::vector<Vector3f> normalsTmp(width * height);
+
+#pragma omp parallel for
+        for (int v = 1; v < height - 1; ++v) {
+            for (int u = 1; u < width - 1; ++u) {
+                unsigned int idx = v * width + u; // linearized index
+
+                const float du = 0.5f * (depthMap[idx + 1] - depthMap[idx - 1]);
+                const float dv = 0.5f * (depthMap[idx + width] - depthMap[idx - width]);
+                if (!std::isfinite(du) || !std::isfinite(dv) || abs(du) > maxDistanceHalved || abs(dv) > maxDistanceHalved) {
+                    normalsTmp[idx] = Vector3f(MINF, MINF, MINF);
+                    continue;
+                }
+
+                // TODO: Compute the normals using central differences.
+                normalsTmp[idx] = Vector3f(du, dv, 0);
+                normalsTmp[idx].normalize();
+                
+            }
+        }
+
+        // We set invalid normals for border regions.
+        for (int u = 0; u < width; ++u) {
+            normalsTmp[u] = Vector3f(MINF, MINF, MINF);
+            normalsTmp[u + (height - 1) * width] = Vector3f(MINF, MINF, MINF);
+        }
+        for (int v = 0; v < height; ++v) {
+            normalsTmp[v * width] = Vector3f(MINF, MINF, MINF);
+            normalsTmp[(width - 1) + v * width] = Vector3f(MINF, MINF, MINF);
+        }
+
+        // We filter out measurements where either point or normal is invalid.
+        const unsigned nPoints = pointsTmp.size();
+        m_points.reserve(std::floor(float(nPoints) / downsampleFactor));
+        m_normals.reserve(std::floor(float(nPoints) / downsampleFactor));
+        m_colors.reserve(std::floor(float(nPoints) / downsampleFactor));
+
+        for (int i = 0; i < nPoints; i = i + downsampleFactor) {
+            const auto& point = pointsTmp[i];
+            const auto& normal = normalsTmp[i];
+            const auto& color = colorsTmp[i];
+
+            if (point.allFinite() && normal.allFinite()) {
+                m_points.push_back(point);
+                m_normals.push_back(normal);
+                m_colors.push_back(color);
             }
         }
     }
@@ -165,6 +276,8 @@ public:
             delete ps;
         }
 
+        // Initialize colors with default values
+        m_colors.resize(m_points.size(), Vector3f(0.5f, 0.5f, 0.5f));
 
         //std::ofstream file("pointcloud.off");
         //file << "OFF" << std::endl;
@@ -192,6 +305,14 @@ public:
         return m_normals;
     }
 
+    std::vector<Vector3f>& getColors() {
+        return m_colors;
+    }
+
+    const std::vector<Vector3f>& getColors() const {
+        return m_colors;
+    }
+
     unsigned int getClosestPoint(Vector3f& p) {
         unsigned int idx = 0;
 
@@ -210,5 +331,5 @@ public:
 private:
     std::vector<Vector3f> m_points;
     std::vector<Vector3f> m_normals;
-
+    std::vector<Vector3f> m_colors;
 };

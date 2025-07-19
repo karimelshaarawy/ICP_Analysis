@@ -158,3 +158,110 @@ Initializing FLANN index with 55317 points.
 FLANN index created.
     T->S correspondences: 0
     No T->S correspondences found, returning identity.
+
+** Colored linear Point-to-plane **
+
+=== ICP Metrics (Iteration 15) ===
+Optimizer: LinearICP
+Constraint: PointToPlane
+Total Points: 55177
+Valid Correspondences: 34330
+Mean Distance: 1.036533
+Median Distance: 0.995613
+Max Distance: 1.776707
+Min Distance: 0.875157
+Std Deviation: 0.129428
+RMSE: 1.044582
+Computation Time: 1.199022s
+=====================================
+Optimization iteration done.
+Current camera pose: 
+ 0.999897 -0.013386  0.004833  0.022394
+ 0.013751  0.996231 -0.085634 -0.037264
+-0.003668  0.085692  0.996314 -0.283430
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [24 | 798]
+
+
+** Colored LM Point-To-Plane **
+
+
+=== ICP Metrics (Iteration 15) ===
+Optimizer: LevenbergMarquardtICP
+Constraint: PointToPlane
+Total Points: 55177
+Valid Correspondences: 3495
+Mean Distance: 1.251579
+Median Distance: 1.233057
+Max Distance: 1.552697
+Min Distance: 1.144847
+Std Deviation: 0.081204
+RMSE: 1.254210
+Computation Time: 1.276372s
+=====================================
+Pose update - Translation: 0.000595, Rotation: 0.033408 deg
+Solver iters: 2, init cost: 6.006548, final cost: 6.006273, termination: 0
+
+Current camera pose: 
+ 0.988472 -0.098625  0.114872 -0.113165
+ 0.107548  0.991424 -0.074248 -0.301830
+-0.106564  0.085746  0.990602 -0.011778
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [24 | 798]
+
+
+** Colored LM Point-to-Point **
+
+=== ICP Metrics (Iteration 15) ===
+Optimizer: LevenbergMarquardtICP
+Constraint: PointToPoint
+Total Points: 55177
+Valid Correspondences: 34402
+Mean Distance: 1.036215
+Median Distance: 0.996640
+Max Distance: 1.681386
+Min Distance: 0.872379
+Std Deviation: 0.128585
+RMSE: 1.044163
+Computation Time: 2.283734s
+=====================================
+Pose update - Translation: 0.000091, Rotation: 0.011993 deg
+Solver iters: 2, init cost: 14.798682, final cost: 14.798100, termination: 0
+
+Current camera pose: 
+ 0.999758 -0.019951  0.009305  0.023937
+ 0.020743  0.995290 -0.094693 -0.026906
+-0.007372  0.094863  0.995463 -0.281877
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [24 | 798]
+
+** Colored Symmetric PointToPoint ** 
+
+=== ICP Metrics (Iteration 5) ===
+Optimizer: SymmetricICP
+Constraint: PointToPoint
+Total Points: 56069
+Valid Correspondences: 33973
+Mean Distance: 1.029811
+Median Distance: 0.981783
+Max Distance: 2.983904
+Min Distance: 0.842791
+Std Deviation: 0.156623
+RMSE: 1.041654
+Computation Time: 47.665704s
+=====================================
+  Iteration 5 completed in 33.054680 seconds.
+  Current estimated pose:
+ 0.999373  0.005025 -0.034841 -0.018918
+-0.001915  0.996010  0.088973  0.039030
+ 0.035145 -0.088875  0.995413  0.217935
+ 0.000000  0.000000  0.000000  1.000000
+Alternating Symmetric ICP Iteration 6/15
+  Step 1: Optimizing S->T...
+Initializing FLANN index with 54860 points.
+FLANN index created.
+    S->T correspondences: 34153
+  Step 2: Optimizing T->S...
+Initializing FLANN index with 56069 points.
+FLANN index created.
+    T->S correspondences: 23401
