@@ -26,7 +26,7 @@
 
 #define SHOW_BUNNY_CORRESPONDENCES 0
 
-#define USE_POINT_TO_PLANE  0
+#define USE_POINT_TO_PLANE  1
 #define USE_LINEAR_ICP      0
 #define USE_LM_ICP          0
 #define USE_SYMMETRIC_ICP   1 // Set to 1 to use Symmetric ICP
@@ -210,7 +210,23 @@ int reconstructRoom() {
 		// Estimate the current camera pose from source to target mesh with ICP optimization.
 		// We downsample the source image to speed up the correspondence matching.
 		PointCloud source{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
-		optimizer->estimatePose(source, target, currentCameraToWorld);
+		
+		// Get ground truth pose from sensor
+		Matrix4f groundTruthPose = sensor.getTrajectory();
+		
+		// Determine optimizer type for metrics
+		std::string optimizerType;
+		if (USE_SYMMETRIC_ICP) {
+			optimizerType = "SymmetricICP";
+		} else if (USE_LINEAR_ICP) {
+			optimizerType = "LinearICP";
+		} else if (USE_LM_ICP) {
+			optimizerType = "LevenbergMarquardtICP";
+		} else {
+			optimizerType = "CeresICP";
+		}
+		
+		optimizer->estimatePose(source, target, currentCameraToWorld, groundTruthPose, optimizerType);
 		
 		// Invert the transformation matrix to get the current camera pose.
 		Matrix4f currentCameraPose = currentCameraToWorld.inverse();

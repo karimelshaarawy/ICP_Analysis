@@ -1,0 +1,160 @@
+** Linear Point-to-Point ** 
+
+Optimization iteration done.
+Matching points ...
+Completed in 1.061313 seconds.
+=== ICP Metrics (Iteration 15) ===
+Optimizer: LinearICP
+Constraint: PointToPoint
+Total Points: 55177
+Valid Correspondences: 34398
+Mean Distance: 1.036214
+Median Distance: 0.996670
+Max Distance: 1.681321
+Min Distance: 0.872395
+Std Deviation: 0.128560
+RMSE: 1.044159
+Computation Time: 1.089570s
+=====================================
+Optimization iteration done.
+Current camera pose: 
+ 0.999727 -0.020014  0.009354  0.023876
+ 0.020801  0.995251 -0.094701 -0.026893
+-0.007416  0.094848  0.995423 -0.281797
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [24 | 798]
+
+** Linear Point-to-Plane ** 
+
+=== ICP Metrics (Iteration 15) ===
+Optimizer: LinearICP
+Constraint: PointToPlane
+Total Points: 55177
+Valid Correspondences: 34444
+Mean Distance: 1.036221
+Median Distance: 0.996822
+Max Distance: 1.681848
+Min Distance: 0.872298
+Std Deviation: 0.128684
+RMSE: 1.044181
+Computation Time: 1.127655s
+=====================================
+Optimization iteration done.
+Current camera pose: 
+ 0.999767 -0.019246  0.009423  0.023690
+ 0.020056  0.995263 -0.095109 -0.026399
+-0.007548  0.095276  0.995421 -0.281949
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [24 | 798]
+
+** LM Point-to-Point ** 
+
+=== ICP Metrics (Iteration 15) ===
+Optimizer: LevenbergMarquardtICP
+Constraint: PointToPoint
+Total Points: 55177
+Valid Correspondences: 34408
+Mean Distance: 1.036186
+Median Distance: 0.996639
+Max Distance: 1.681395
+Min Distance: 0.872376
+Std Deviation: 0.128595
+RMSE: 1.044135
+Computation Time: 2.111251s
+=====================================
+Pose update - Translation: 0.000088, Rotation: 0.011653 deg
+Solver iters: 2, init cost: 0.420507, final cost: 0.419945, termination: 0
+
+Current camera pose: 
+ 0.999758 -0.019940  0.009297  0.023947
+ 0.020731  0.995291 -0.094694 -0.026904
+-0.007365  0.094864  0.995463 -0.281878
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [24 | 798]
+
+** LM Point-to-Plane ** 
+
+=== ICP Metrics (Iteration 15) ===
+Optimizer: LevenbergMarquardtICP
+Constraint: PointToPlane
+Total Points: 55177
+Valid Correspondences: 34377
+Mean Distance: 1.036849
+Median Distance: 0.997558
+Max Distance: 1.681358
+Min Distance: 0.872931
+Std Deviation: 0.128510
+RMSE: 1.044783
+Computation Time: 3.147056s
+=====================================
+Pose update - Translation: 0.000125, Rotation: 0.013228 deg
+Solver iters: 2, init cost: 0.549125, final cost: 0.548457, termination: 0
+
+Current camera pose: 
+ 0.999745 -0.019963  0.010595  0.021751
+ 0.020884  0.995220 -0.095402 -0.026141
+-0.008640  0.095599  0.995382 -0.281916
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [24 | 798]
+
+** Symmetric Point-to-Point ** 
+
+
+=== ICP Metrics (Iteration 15) ===
+Optimizer: SymmetricICP
+Constraint: PointToPoint
+Total Points: 54205
+Valid Correspondences: 33190
+Mean Distance: 1.029496
+Median Distance: 0.980092
+Max Distance: 3.809108
+Min Distance: 0.840207
+Std Deviation: 0.165625
+RMSE: 1.042734
+Computation Time: 1.943420s
+=====================================
+  Iteration 15 completed in 3.040278 seconds.
+  Current estimated pose:
+ 0.999450  0.005709 -0.032432 -0.020914
+-0.002788  0.995943  0.089686  0.032428
+ 0.032808 -0.089572  0.995429  0.205614
+ 0.000000  0.000000  0.000000  1.000000
+Current camera pose: 
+ 0.999466 -0.002778  0.032814  0.014246
+ 0.005718  0.995987 -0.089550 -0.013766
+-0.032426  0.089713  0.995453 -0.208267
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [18 | 798]
+
+** Symmetric Point-to-Plane ** 
+
+=== ICP Metrics (Iteration 14) ===
+Optimizer: SymmetricICP
+Constraint: PointToPlane
+Total Points: 55317
+Valid Correspondences: 0
+Mean Distance: 0.000000
+Median Distance: 0.000000
+Max Distance: 0.000000
+Min Distance: 0.000000
+Std Deviation: 0.000000
+RMSE: 0.000000
+Computation Time: 2.455751s
+=====================================
+  Iteration 14 completed in 3.837790 seconds.
+  Current estimated pose:
+ 0.999943 -0.007351 -0.007709  0.007183
+ 0.007428  0.999922  0.010008 -0.000592
+ 0.007634 -0.010065  0.999920  0.881451
+ 0.000000  0.000000  0.000000  1.000000
+Alternating Symmetric ICP Iteration 15/15
+  Step 1: Optimizing S->T...
+Initializing FLANN index with 54860 points.
+FLANN index created.
+    S->T correspondences: 0
+    No S->T correspondences found, returning identity.
+  Step 2: Optimizing T->S...
+Initializing FLANN index with 55317 points.
+FLANN index created.
+    T->S correspondences: 0
+    No T->S correspondences found, returning identity.

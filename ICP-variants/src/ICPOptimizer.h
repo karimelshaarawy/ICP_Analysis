@@ -16,6 +16,13 @@
 #include <vector>
 #include <Eigen/Dense>
 #include <omp.h> // For OpenMP
+#include <fstream>
+#include <sstream>
+#include <chrono>
+#include <iomanip>
+#include <cmath> // For sqrt, pow, etc.
+#include <algorithm> // For std::sort
+#include <numeric> // For std::accumulate
 
 
 // Type definitions for 6D pose representation
@@ -26,6 +33,178 @@ typedef Eigen::Matrix<float, 6, 6> Matrix6f;
 using Vector3d = Eigen::Vector3d;
 using Matrix4d = Eigen::Matrix4d;
 using Matrix3d = Eigen::Matrix3d;
+
+/**
+ * Metrics class for evaluating ICP performance
+ */
+class ICPMetrics {
+public:
+    struct MetricsData {
+        double meanDistance;
+        double medianDistance;
+        double maxDistance;
+        double minDistance;
+        double stdDeviation;
+        double rmse;
+        int validCorrespondences;
+        int totalPoints;
+        double computationTime;
+        int iteration;
+        std::string optimizerType;
+        std::string constraintType;
+    };
+
+    ICPMetrics() : m_logFile("icp_metrics.log") {
+        initializeLogFile();
+    }
+
+    ~ICPMetrics() {
+        if (m_logFile.is_open()) {
+            m_logFile.close();
+        }
+    }
+
+    MetricsData calculateMetrics(const std::vector<Vector3f>& sourcePoints,
+                               const std::vector<Vector3f>& targetPoints,
+                               const std::vector<Match>& matches,
+                               const Matrix4f& estimatedPose,
+                               const Matrix4f& groundTruthPose,
+                               int iteration,
+                               const std::string& optimizerType,
+                               const std::string& constraintType,
+                               double computationTime) {
+        
+        MetricsData metrics;
+        metrics.iteration = iteration;
+        metrics.optimizerType = optimizerType;
+        metrics.constraintType = constraintType;
+        metrics.computationTime = computationTime;
+        metrics.totalPoints = sourcePoints.size();
+        metrics.validCorrespondences = 0;
+
+        std::vector<double> distances;
+        distances.reserve(sourcePoints.size());
+
+        // Transform source points with estimated pose
+        auto transformedSourcePoints = transformPoints(sourcePoints, estimatedPose);
+        
+        // Transform source points with ground truth pose
+        auto groundTruthTransformedPoints = transformPoints(sourcePoints, groundTruthPose);
+
+        // Calculate distances for valid correspondences
+        for (size_t i = 0; i < matches.size(); ++i) {
+            if (matches[i].idx >= 0 && matches[i].idx < targetPoints.size()) {
+                const auto& transformedPoint = transformedSourcePoints[i];
+                const auto& groundTruthPoint = groundTruthTransformedPoints[i];
+                const auto& targetPoint = targetPoints[matches[i].idx];
+
+                // Calculate distance between estimated and ground truth transformed points
+                double distance = (transformedPoint - groundTruthPoint).norm();
+                distances.push_back(distance);
+                metrics.validCorrespondences++;
+            }
+        }
+
+        if (distances.empty()) {
+            // No valid correspondences
+            metrics.meanDistance = 0.0;
+            metrics.medianDistance = 0.0;
+            metrics.maxDistance = 0.0;
+            metrics.minDistance = 0.0;
+            metrics.stdDeviation = 0.0;
+            metrics.rmse = 0.0;
+        } else {
+            // Calculate statistics
+            std::sort(distances.begin(), distances.end());
+            
+            metrics.meanDistance = std::accumulate(distances.begin(), distances.end(), 0.0) / distances.size();
+            metrics.medianDistance = distances[distances.size() / 2];
+            metrics.maxDistance = distances.back();
+            metrics.minDistance = distances.front();
+            
+            // Calculate standard deviation
+            double variance = 0.0;
+            for (double dist : distances) {
+                variance += (dist - metrics.meanDistance) * (dist - metrics.meanDistance);
+            }
+            metrics.stdDeviation = std::sqrt(variance / distances.size());
+            
+            // Calculate RMSE
+            double sumSquaredErrors = 0.0;
+            for (double dist : distances) {
+                sumSquaredErrors += dist * dist;
+            }
+            metrics.rmse = std::sqrt(sumSquaredErrors / distances.size());
+        }
+
+        return metrics;
+    }
+
+    void logMetrics(const MetricsData& metrics) {
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        auto tm = *std::localtime(&time_t);
+
+        m_logFile << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << ","
+                  << metrics.iteration << ","
+                  << metrics.optimizerType << ","
+                  << metrics.constraintType << ","
+                  << metrics.totalPoints << ","
+                  << metrics.validCorrespondences << ","
+                  << std::fixed << std::setprecision(6)
+                  << metrics.meanDistance << ","
+                  << metrics.medianDistance << ","
+                  << metrics.maxDistance << ","
+                  << metrics.minDistance << ","
+                  << metrics.stdDeviation << ","
+                  << metrics.rmse << ","
+                  << metrics.computationTime << std::endl;
+        
+        m_logFile.flush(); // Ensure immediate writing to file
+    }
+
+    void printMetrics(const MetricsData& metrics) {
+        std::cout << "=== ICP Metrics (Iteration " << metrics.iteration << ") ===" << std::endl;
+        std::cout << "Optimizer: " << metrics.optimizerType << std::endl;
+        std::cout << "Constraint: " << metrics.constraintType << std::endl;
+        std::cout << "Total Points: " << metrics.totalPoints << std::endl;
+        std::cout << "Valid Correspondences: " << metrics.validCorrespondences << std::endl;
+        std::cout << "Mean Distance: " << std::fixed << std::setprecision(6) << metrics.meanDistance << std::endl;
+        std::cout << "Median Distance: " << metrics.medianDistance << std::endl;
+        std::cout << "Max Distance: " << metrics.maxDistance << std::endl;
+        std::cout << "Min Distance: " << metrics.minDistance << std::endl;
+        std::cout << "Std Deviation: " << metrics.stdDeviation << std::endl;
+        std::cout << "RMSE: " << metrics.rmse << std::endl;
+        std::cout << "Computation Time: " << metrics.computationTime << "s" << std::endl;
+        std::cout << "=====================================" << std::endl;
+    }
+
+private:
+    std::ofstream m_logFile;
+
+    void initializeLogFile() {
+        m_logFile.open("icp_metrics.log", std::ios::app);
+        if (m_logFile.tellp() == 0) {
+            // File is empty, write header
+            m_logFile << "Timestamp,Iteration,Optimizer,Constraint,TotalPoints,ValidCorrespondences,"
+                     << "MeanDistance,MedianDistance,MaxDistance,MinDistance,StdDeviation,RMSE,ComputationTime" << std::endl;
+        }
+    }
+
+    std::vector<Vector3f> transformPoints(const std::vector<Vector3f>& points, const Matrix4f& pose) {
+        std::vector<Vector3f> transformedPoints;
+        transformedPoints.reserve(points.size());
+
+        const auto rotation = pose.block(0, 0, 3, 3);
+        const auto translation = pose.block(0, 3, 3, 1);
+
+        for (const auto& point : points) {
+            transformedPoints.push_back(rotation * point + translation);
+        }
+
+        return transformedPoints;
+    }
+};
 
 /**
  * Helper methods for writing Ceres cost functions.
@@ -295,7 +474,8 @@ public:
     ICPOptimizer() :
         m_bUsePointToPlaneConstraints{ true },
         m_nIterations{ 20 },
-        m_nearestNeighborSearch{ std::make_unique<NearestNeighborSearchFlann>() }
+        m_nearestNeighborSearch{ std::make_unique<NearestNeighborSearchFlann>() },
+        m_metrics{ std::make_unique<ICPMetrics>() }
     { }
 
     void setMatchingMaxDistance(float maxDistance) {
@@ -311,11 +491,18 @@ public:
     }
 
     virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose) = 0;
+    
+    // Overloaded version with ground truth for metrics
+    virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose, 
+                             const Matrix4f& groundTruthPose, const std::string& optimizerType = "Unknown") {
+        estimatePose(source, target, initialPose);
+    }
 
 protected:
     bool m_bUsePointToPlaneConstraints;
     unsigned m_nIterations;
     std::unique_ptr<NearestNeighborSearch> m_nearestNeighborSearch;
+    std::unique_ptr<ICPMetrics> m_metrics;
 
     std::vector<Vector3f> transformPoints(const std::vector<Vector3f>& sourcePoints, const Matrix4f& pose) {
         std::vector<Vector3f> transformedPoints;
@@ -360,6 +547,24 @@ protected:
             }
         }
     }
+
+    void calculateAndLogMetrics(const std::vector<Vector3f>& sourcePoints,
+                               const std::vector<Vector3f>& targetPoints,
+                               const std::vector<Match>& matches,
+                               const Matrix4f& estimatedPose,
+                               const Matrix4f& groundTruthPose,
+                               int iteration,
+                               const std::string& optimizerType,
+                               double computationTime) {
+        std::string constraintType = m_bUsePointToPlaneConstraints ? "PointToPlane" : "PointToPoint";
+        
+        auto metrics = m_metrics->calculateMetrics(sourcePoints, targetPoints, matches, 
+                                                 estimatedPose, groundTruthPose, iteration,
+                                                 optimizerType, constraintType, computationTime);
+        
+        m_metrics->logMetrics(metrics);
+        m_metrics->printMetrics(metrics);
+    }
 };
 
 
@@ -371,6 +576,11 @@ public:
     CeresICPOptimizer() {}
 
     virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose) override {
+        estimatePose(source, target, initialPose, Matrix4f::Identity(), "CeresICP");
+    }
+
+    virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose, 
+                             const Matrix4f& groundTruthPose, const std::string& optimizerType) override {
         // Build the index of the FLANN tree (for fast nearest neighbor lookup).
         m_nearestNeighborSearch->buildIndex(target.getPoints());
 
@@ -386,6 +596,7 @@ public:
         for (int i = 0; i < m_nIterations; ++i) {
             // Compute the matches.
             std::cout << "Matching points ..." << std::endl;
+            auto startTime = std::chrono::high_resolution_clock::now();
             clock_t begin = clock();
 
             auto transformedPoints = transformPoints(source.getPoints(), estimatedPose);
@@ -416,6 +627,13 @@ public:
             Matrix4f matrix = PoseIncrement<double>::convertToMatrix(poseIncrement);
             estimatedPose = PoseIncrement<double>::convertToMatrix(poseIncrement) * estimatedPose;
             poseIncrement.setZero();
+
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto computationTime = std::chrono::duration<double>(endTime - startTime).count();
+
+            // Calculate and log metrics
+            calculateAndLogMetrics(source.getPoints(), target.getPoints(), matches, 
+                                 estimatedPose, groundTruthPose, i + 1, optimizerType, computationTime);
 
             std::cout << "Optimization iteration done." << std::endl;
         }
@@ -483,6 +701,11 @@ public:
     LinearICPOptimizer() {}
 
     virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose) override {
+        estimatePose(source, target, initialPose, Matrix4f::Identity(), "LinearICP");
+    }
+
+    virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose, 
+                             const Matrix4f& groundTruthPose, const std::string& optimizerType) override {
         // Build the index of the FLANN tree (for fast nearest neighbor lookup).
         m_nearestNeighborSearch->buildIndex(target.getPoints());
 
@@ -492,6 +715,7 @@ public:
         for (int i = 0; i < m_nIterations; ++i) {
             // Compute the matches.
             std::cout << "Matching points ..." << std::endl;
+            auto startTime = std::chrono::high_resolution_clock::now();
             clock_t begin = clock();
 
             auto transformedPoints = transformPoints(source.getPoints(), estimatedPose);
@@ -525,6 +749,13 @@ public:
             else {
                 estimatedPose = estimatePosePointToPoint(sourcePoints, targetPoints) * estimatedPose;
             }
+
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto computationTime = std::chrono::duration<double>(endTime - startTime).count();
+
+            // Calculate and log metrics
+            calculateAndLogMetrics(source.getPoints(), target.getPoints(), matches, 
+                                 estimatedPose, groundTruthPose, i + 1, optimizerType, computationTime);
 
             std::cout << "Optimization iteration done." << std::endl;
         }
@@ -693,6 +924,11 @@ public:
     }
 
     virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose) override {
+        estimatePose(source, target, initialPose, Matrix4f::Identity(), "LevenbergMarquardtICP");
+    }
+
+    virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose, 
+                             const Matrix4f& groundTruthPose, const std::string& optimizerType) override {
         // For precision with Ceres, we will work with doubles.
         Matrix4d estimatedPose = initialPose.cast<double>();
 
@@ -701,6 +937,7 @@ public:
 
         for (int i = 0; i < m_nIterations; ++i) {
             std::cout << "=== ICP Iteration " << (i + 1) << "/" << m_nIterations << " ===" << std::endl;
+            auto startTime = std::chrono::high_resolution_clock::now();
             ceres::Problem problem;
 
             // 1. Transform source points with the current estimated pose to find correspondences.
@@ -792,6 +1029,12 @@ public:
             Eigen::JacobiSVD<Eigen::Matrix3d> svd(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
             estimatedPose.block<3,3>(0,0) = svd.matrixU() * svd.matrixV().transpose(); // R ← closest SO(3)
 
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto computationTime = std::chrono::duration<double>(endTime - startTime).count();
+
+            // Calculate and log metrics
+            calculateAndLogMetrics(source.getPoints(), target.getPoints(), matches, 
+                                 estimatedPose.cast<float>(), groundTruthPose, i + 1, optimizerType, computationTime);
                             
             // Output summary for this iteration
             double angle, tx, ty, tz;
@@ -850,10 +1093,16 @@ public:
     ~AlternatingSymmetricICPOptimizer() = default;
 
     void estimatePose(const PointCloud& source, const PointCloud& target, Eigen::Matrix4f& transformation) override {
+        estimatePose(source, target, transformation, Matrix4f::Identity(), "SymmetricICP");
+    }
+
+    void estimatePose(const PointCloud& source, const PointCloud& target, Eigen::Matrix4f& transformation, 
+                     const Matrix4f& groundTruthPose, const std::string& optimizerType) override {
         Eigen::Matrix4f estimatedPose = transformation;
 
         for (int i = 0; i < m_nIterations; ++i) {
             std::cout << "Alternating Symmetric ICP Iteration " << i + 1 << "/" << m_nIterations << std::endl;
+            auto startTime = std::chrono::high_resolution_clock::now();
             clock_t iterStart = clock();
 
             // --- STEP 1: Source-to-Target Optimization ---
@@ -866,6 +1115,20 @@ public:
             Eigen::Matrix4f deltaT2 = optimizeTargetToSource(source, target, estimatedPose);
             // Apply inverse since we optimized T->S but need S->T transformation
             estimatedPose = deltaT2.inverse() * estimatedPose;
+
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto computationTime = std::chrono::duration<double>(endTime - startTime).count();
+
+            // For symmetric ICP, we need to get matches for metrics
+            auto transformedPoints = transformPoints(source.getPoints(), estimatedPose);
+            auto transformedNormals = transformNormals(source.getNormals(), estimatedPose);
+            m_nearestNeighborSearch->buildIndex(target.getPoints());
+            auto matches = m_nearestNeighborSearch->queryMatches(transformedPoints);
+            pruneCorrespondences(transformedNormals, target.getNormals(), matches);
+
+            // Calculate and log metrics
+            calculateAndLogMetrics(source.getPoints(), target.getPoints(), matches, 
+                                 estimatedPose, groundTruthPose, i + 1, optimizerType, computationTime);
 
             clock_t iterEnd = clock();
             double elapsedSecs = double(iterEnd - iterStart) / CLOCKS_PER_SEC;
