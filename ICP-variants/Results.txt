@@ -265,3 +265,31 @@ FLANN index created.
 Initializing FLANN index with 56069 points.
 FLANN index created.
     T->S correspondences: 23401
+
+
+** high Downsampling Linear Point-to-Point ** 
+
+
+Optimization iteration done.
+Matching points ...
+Completed in 0.512300 seconds.
+=== ICP Metrics (Iteration 15) ===
+Optimizer: LinearICP
+Constraint: PointToPoint
+Total Points: 27586
+Valid Correspondences: 17087
+Mean Distance: 1.037131
+Median Distance: 0.998175
+Max Distance: 1.681894
+Min Distance: 0.872941
+Std Deviation: 0.128349
+RMSE: 1.045042
+Computation Time: 0.526170s
+=====================================
+Optimization iteration done.
+Current camera pose: 
+ 0.999747 -0.019609  0.009121  0.023125
+ 0.020381  0.995254 -0.094844 -0.026610
+-0.007215  0.094998  0.995423 -0.281945
+-0.000000 -0.000000 -0.000000  1.000000
+ProcessNextFrame [24 | 798]

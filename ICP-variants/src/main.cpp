@@ -24,22 +24,50 @@
  * - USE_COLORED_ICP = 1: Uses color information in addition to geometry for better alignment
  * - USE_COLORED_ICP = 0: Uses only geometric information (faster)
  * 
+ * Downsampling Level:
+ * - DOWNSAMPLING_LEVEL = "low": No downsampling (highest quality, slowest)
+ * - DOWNSAMPLING_LEVEL = "medium": 4x downsampling (balanced performance)
+ * - DOWNSAMPLING_LEVEL = "high": 8x downsampling (fastest processing)
+ * 
  * Examples:
  * - For bunny alignment with LM-ICP and point-to-plane: USE_LM_ICP=1, USE_POINT_TO_PLANE=1
  * - For room reconstruction with colored symmetric ICP: USE_SYMMETRIC_ICP=1, USE_POINT_TO_PLANE=1, USE_COLORED_ICP=1
+ * - For fast processing: DOWNSAMPLING_LEVEL="high"
+ * - For high accuracy: DOWNSAMPLING_LEVEL="low"
  */
 
 #define SHOW_BUNNY_CORRESPONDENCES 0
 
-#define USE_POINT_TO_PLANE  1
-#define USE_LINEAR_ICP      0
+#define USE_POINT_TO_PLANE  0
+#define USE_LINEAR_ICP      1
 #define USE_LM_ICP          0
-#define USE_SYMMETRIC_ICP   1 // Set to 1 to use Symmetric ICP
+#define USE_SYMMETRIC_ICP   0 // Set to 1 to use Symmetric ICP
 #define USE_COLORED_ICP     1 // Set to 1 to use Colored ICP
 
 
 #define RUN_SHAPE_ICP		0
 #define RUN_SEQUENCE_ICP	1
+
+// Downsampling configuration
+// Choose one of: "low", "medium", "high"
+// - low: downsampleFactor = 1 (no downsampling, highest quality, slowest)
+// - medium: downsampleFactor = 4 (75% reduction, balanced performance)
+// - high: downsampleFactor = 8 (87.5% reduction, fastest processing)
+#define DOWNSAMPLING_LEVEL "high"
+
+// Function to get downsampling factor based on level
+unsigned int getDownsampleFactor(const std::string& level) {
+    if (level == "low") {
+        return 1;
+    } else if (level == "medium") {
+        return 4;
+    } else if (level == "high") {
+        return 8;
+    } else {
+        std::cout << "Warning: Unknown downsampling level '" << level << "'. Using medium (4x downsampling)." << std::endl;
+        return 4;
+    }
+}
 
 void debugCorrespondenceMatching() {
 	// Load the source and target mesh.
@@ -153,7 +181,11 @@ int alignBunnyWithICP() {
 }
 
 int reconstructRoom() {
-		std::cout << "lolo..." << std::endl;
+	std::cout << "Starting room reconstruction..." << std::endl;
+
+	// Get downsampling factor based on configuration
+	unsigned int downsampleFactor = getDownsampleFactor(DOWNSAMPLING_LEVEL);
+	std::cout << "Downsampling level: " << DOWNSAMPLING_LEVEL << " (factor: " << downsampleFactor << "x)" << std::endl;
 
 	std::string filenameIn = std::string("../../../Data/rgbd_dataset_freiburg1_xyz/");
 	std::string filenameBaseOut = std::string("mesh_");
@@ -171,9 +203,9 @@ int reconstructRoom() {
 	PointCloud target;
 	if (USE_COLORED_ICP) {
 		target = PointCloud{ sensor.getDepth(), sensor.getColorRGBX(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(),
-		                    sensor.getColorIntrinsics(), sensor.getColorExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+		                    sensor.getColorIntrinsics(), sensor.getColorExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), downsampleFactor };
 	} else {
-		target = PointCloud{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+		target = PointCloud{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), downsampleFactor };
 	}
 
 	// Setup the optimizer.
@@ -230,9 +262,9 @@ int reconstructRoom() {
 		PointCloud source;
 		if (USE_COLORED_ICP) {
 			source = PointCloud{ sensor.getDepth(), sensor.getColorRGBX(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(),
-			                    sensor.getColorIntrinsics(), sensor.getColorExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+			                    sensor.getColorIntrinsics(), sensor.getColorExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), downsampleFactor };
 		} else {
-			source = PointCloud{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), 4 };
+			source = PointCloud{ sensor.getDepth(), sensor.getDepthIntrinsics(), sensor.getDepthExtrinsics(), sensor.getDepthImageWidth(), sensor.getDepthImageHeight(), downsampleFactor };
 		}
 		
 		// Get ground truth pose from sensor
