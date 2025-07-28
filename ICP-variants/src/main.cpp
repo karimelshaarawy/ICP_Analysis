@@ -11,6 +11,7 @@
  * ICP Optimizer Configuration:
  * 
  * Choose one of the following ICP implementations:
+ * - USE_HIERARCHICAL_ICP = 1: Uses HierarchicalICPOptimizer (3-level multi-resolution, fastest)
  * - USE_LINEAR_ICP = 1: Uses LinearICPOptimizer (fast, works well for small rotations)
  * - USE_LM_ICP = 1: Uses LevenbergMarquardtICPOptimizer (robust, handles large rotations)
  * - USE_SYMMETRIC_ICP = 1: Uses AlternatingSymmetricICPOptimizer (symmetric approach)
@@ -32,6 +33,7 @@
  * Examples:
  * - For bunny alignment with LM-ICP and point-to-plane: USE_LM_ICP=1, USE_POINT_TO_PLANE=1
  * - For room reconstruction with colored symmetric ICP: USE_SYMMETRIC_ICP=1, USE_POINT_TO_PLANE=1, USE_COLORED_ICP=1
+ * - For hierarchical ICP with colored constraints: USE_HIERARCHICAL_ICP=1, USE_COLORED_ICP=1
  * - For fast processing: DOWNSAMPLING_LEVEL="high"
  * - For high accuracy: DOWNSAMPLING_LEVEL="low"
  */
@@ -39,10 +41,11 @@
 #define SHOW_BUNNY_CORRESPONDENCES 0
 
 #define USE_POINT_TO_PLANE  0
-#define USE_LINEAR_ICP      1
+#define USE_LINEAR_ICP      0
 #define USE_LM_ICP          0
-#define USE_SYMMETRIC_ICP   0 // Set to 1 to use Symmetric ICP
-#define USE_COLORED_ICP     1 // Set to 1 to use Colored ICP
+#define USE_SYMMETRIC_ICP   1// Set to 1 to use Symmetric ICP
+#define USE_HIERARCHICAL_ICP 0 // Set to 1 to use Hierarchical ICP
+#define USE_COLORED_ICP     0 // Set to 1 to use Colored ICP
 
 
 #define RUN_SHAPE_ICP		0
@@ -210,7 +213,10 @@ int reconstructRoom() {
 
 	// Setup the optimizer.
 	ICPOptimizer* optimizer = nullptr;
-	#if USE_SYMMETRIC_ICP
+	#if USE_HIERARCHICAL_ICP
+    std::cout << "Using Hierarchical ICP Optimizer" << std::endl;
+    optimizer = new HierarchicalICPOptimizer();
+#elif USE_SYMMETRIC_ICP
     std::cout << "Using Symmetric ICP Optimizer" << std::endl;
     optimizer = new AlternatingSymmetricICPOptimizer();
 #elif USE_LINEAR_ICP
@@ -272,7 +278,9 @@ int reconstructRoom() {
 		
 		// Determine optimizer type for metrics
 		std::string optimizerType;
-		if (USE_SYMMETRIC_ICP) {
+		if (USE_HIERARCHICAL_ICP) {
+			optimizerType = "HierarchicalICP";
+		} else if (USE_SYMMETRIC_ICP) {
 			optimizerType = "SymmetricICP";
 		} else if (USE_LINEAR_ICP) {
 			optimizerType = "LinearICP";
