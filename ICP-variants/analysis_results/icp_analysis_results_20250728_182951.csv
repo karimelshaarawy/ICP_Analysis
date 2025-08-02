@@ -1,0 +1,17 @@
+total_time,final_rmse,final_mean_distance,final_median_distance,final_max_distance,final_min_distance,final_std_deviation,final_valid_correspondences,final_total_points,iterations_converged,convergence_rate,config_name,run,total_time_std
+0.47043871879577637,,,,,,,,,,,LinearICP_PointToPoint_Low,1,0.0
+0.9728937149047852,,,,,,,,,,,LinearICP_PointToPoint_Medium,1,0.0
+1.061980962753296,,,,,,,,,,,LinearICP_PointToPoint_High,1,0.0
+0.9994256496429443,,,,,,,,,,,LinearICP_PointToPlane_Low,1,0.0
+0.9993970394134521,,,,,,,,,,,LinearICP_PointToPlane_Medium,1,0.0
+0.9678447246551514,,,,,,,,,,,LinearICP_PointToPlane_High,1,0.0
+1.329087734222412,,,,,,,,,,,LinearICP_Colored_PointToPoint_Low,1,0.0
+1.076385259628296,,,,,,,,,,,LinearICP_Colored_PointToPlane_Low,1,0.0
+1.3125030994415283,,,,,,,,,,,LMICP_PointToPoint,1,0.0
+1.7910985946655273,,,,,,,,,,,LMICP_PointToPlane,1,0.0
+1.3889198303222656,,,,,,,,,,,LMICP_Colored_PointToPoint,1,0.0
+1.9570012092590332,,,,,,,,,,,LMICP_Colored_PointToPlane,1,0.0
+1.3506951332092285,,,,,,,,,,,SymmetricICP_PointToPoint,1,0.0
+2.1477670669555664,,,,,,,,,,,SymmetricICP_PointToPlane,1,0.0
+1.4271459579467773,,,,,,,,,,,SymmetricICP_Colored_PointToPoint,1,0.0
+1.952986240386963,,,,,,,,,,,SymmetricICP_Colored_PointToPlane,1,0.0

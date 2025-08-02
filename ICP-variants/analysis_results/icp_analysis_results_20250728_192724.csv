@@ -1,0 +1,2 @@
+total_time,final_rmse,final_mean_distance,final_median_distance,final_max_distance,final_min_distance,final_std_deviation,final_valid_correspondences,final_total_points,iterations_converged,convergence_rate,config_name,run,total_time_std
+0.48260927200317383,,,,,,,,,,,LinearICP_PointToPoint_High,1,0.0

@@ -1,0 +1,11 @@
+ICP Performance Analysis Summary
+==================================================
+
+Ranking by Final RMSE (Best to Worst):
+----------------------------------------
+ 1. LinearICP_PointToPoint_High         | RMSE:   0.0241 | Time:   0.50s | Acc: 66.98%
+
+==================================================
+Best Performance by Category:
+------------------------------
+LinearICP: LinearICP_PointToPoint_High (RMSE: 0.0241)

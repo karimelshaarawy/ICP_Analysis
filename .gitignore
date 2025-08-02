@@ -122,6 +122,12 @@ coverage/
 node_modules/
 vendor/
 
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
 # Environment files
 .env
 .env.local
