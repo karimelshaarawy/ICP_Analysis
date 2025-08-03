@@ -675,17 +675,33 @@ protected:
 
     void pruneCorrespondences(const std::vector<Vector3f>& sourceNormals, const std::vector<Vector3f>& targetNormals, std::vector<Match>& matches) {
         const unsigned nPoints = sourceNormals.size();
+        const float maxNormalAngle = 60.0f * M_PI / 180.0f; // 60 degrees in radians
+        const float cosThreshold = std::cos(maxNormalAngle); // cos(60°) ≈ 0.5
 
         for (unsigned i = 0; i < nPoints; i++) {
             Match& match = matches[i];
-            if (match.idx >= 0) {
+            if (match.idx >= 0 && match.idx < targetNormals.size()) {
                 const auto& sourceNormal = sourceNormals[i];
                 const auto& targetNormal = targetNormals[match.idx];
 
-                // TODO: Invalidate the match (set it to -1) if the angle between the normals is greater than 60
-                if(sourceNormal.dot(targetNormal)< 0.5)
-                match.idx= -1;
-                
+                // Check if normals are valid (not zero vectors)
+                if (sourceNormal.norm() < 1e-6f || targetNormal.norm() < 1e-6f) {
+                    match.idx = -1; // Invalidate match for invalid normals
+                    continue;
+                }
+
+                // Normalize normals to ensure reliable dot product
+                Vector3f normalizedSourceNormal = sourceNormal.normalized();
+                Vector3f normalizedTargetNormal = targetNormal.normalized();
+
+                // Calculate cosine of angle between normals
+                float cosAngle = normalizedSourceNormal.dot(normalizedTargetNormal);
+
+                // Invalidate match if angle between normals is greater than threshold
+                // cos(angle) < cos(60°) means angle > 60°
+                if (cosAngle < cosThreshold) {
+                    match.idx = -1;
+                }
             }
         }
     }
@@ -965,16 +981,51 @@ private:
                                      const std::vector<Vector3f>& sourceColors = std::vector<Vector3f>(),
                                      const std::vector<Vector3f>& targetColors = std::vector<Vector3f>()) {
         if (m_bUseColoredICP && !sourceColors.empty() && !targetColors.empty()) {
-            // For colored point-to-point, we'll use a weighted approach
-            // This is a simplified colored point-to-point implementation
-            ProcrustesAligner procrustAligner;
-            Matrix4f estimatedPose = procrustAligner.estimatePose(sourcePoints, targetPoints);
+            // Colored point-to-point ICP with color-weighted constraints
+            const float colorWeight = 0.1f; // Weight for color similarity
+            const float maxColorDiff = 0.3f; // Maximum color difference threshold
             
-            // Apply color-based refinement
-            // In a full implementation, you would integrate color into the Procrustes alignment
-            // For now, we use the geometric alignment as a base
-            return estimatedPose;
+            // Step 1: Calculate color-based weights for each correspondence
+            std::vector<float> correspondenceWeights;
+            std::vector<Vector3f> filteredSourcePoints;
+            std::vector<Vector3f> filteredTargetPoints;
+            
+            for (size_t i = 0; i < sourcePoints.size() && i < sourceColors.size() && i < targetColors.size(); ++i) {
+                // Calculate color difference (Euclidean distance in RGB space)
+                Vector3f colorDiff = sourceColors[i] - targetColors[i];
+                float colorDistance = colorDiff.norm();
+                
+                // Calculate color similarity weight (exponential decay)
+                float colorSimilarity = std::exp(-colorDistance / maxColorDiff);
+                
+                // Combined weight: geometric + color similarity
+                float combinedWeight = 1.0f + colorWeight * colorSimilarity;
+                
+                // Only include correspondences with reasonable color similarity
+                if (colorDistance < maxColorDiff) {
+                    correspondenceWeights.push_back(combinedWeight);
+                    filteredSourcePoints.push_back(sourcePoints[i]);
+                    filteredTargetPoints.push_back(targetPoints[i]);
+                }
+            }
+            
+            // Step 2: Apply color-weighted Procrustes alignment
+            if (filteredSourcePoints.size() >= 3) { // Need minimum points for alignment
+                ProcrustesAligner procrustAligner;
+                
+                // Use standard Procrustes alignment with filtered points
+                // The filtering already provides color-based weighting by excluding poor matches
+                Matrix4f estimatedPose = procrustAligner.estimatePose(filteredSourcePoints, 
+                                                                     filteredTargetPoints);
+                return estimatedPose;
+            } else {
+                // Fallback to geometric-only alignment if not enough colored correspondences
+                ProcrustesAligner procrustAligner;
+                Matrix4f estimatedPose = procrustAligner.estimatePose(sourcePoints, targetPoints);
+                return estimatedPose;
+            }
         } else {
+            // Standard geometric point-to-point alignment
             ProcrustesAligner procrustAligner;
             Matrix4f estimatedPose = procrustAligner.estimatePose(sourcePoints, targetPoints);
             return estimatedPose;
@@ -985,85 +1036,109 @@ private:
                                      const std::vector<Vector3f>& targetNormals, 
                                      const std::vector<Vector3f>& sourceColors = std::vector<Vector3f>(), 
                                      const std::vector<Vector3f>& targetColors = std::vector<Vector3f>()) {
-    const unsigned nPoints = sourcePoints.size();
-    bool useColoredICP = m_bUseColoredICP && !sourceColors.empty() && !targetColors.empty();
-    
-    // Determine system size based on whether we're using colored ICP
-    unsigned constraintsPerPoint = useColoredICP ? 7 : 4; // 4 geometric + 3 color constraints
-    MatrixXf A = MatrixXf::Zero(constraintsPerPoint * nPoints, 6);
-    VectorXf b = VectorXf::Zero(constraintsPerPoint * nPoints);
-
-    for (unsigned i = 0; i < nPoints; ++i) {
-         const auto& s = sourcePoints[i];
-        const auto& d = targetPoints[i];
-        const auto& n = targetNormals[i];
-
-        // Point-to-plane constraint
-        A(constraintsPerPoint * i, 0) = n.z() * s.y() - n.y() * s.z();
-        A(constraintsPerPoint * i, 1) = n.x() * s.z() - n.z() * s.x();
-        A(constraintsPerPoint * i, 2) = n.y() * s.x() - n.x() * s.y();
-        A.block<1, 3>(constraintsPerPoint * i, 3) = n;
-        b(constraintsPerPoint * i) = (d - s).dot(n);
-
-        // Point-to-point constraints
-        A.block<3, 3>(constraintsPerPoint * i + 1, 0) << 0.0f, s.z(), -s.y(),
-                                                          -s.z(), 0.0f, s.x(),
-                                                           s.y(), -s.x(), 0.0f;
-        A.block<3, 3>(constraintsPerPoint * i + 1, 3).setIdentity();
-        b.segment<3>(constraintsPerPoint * i + 1) = d - s;
+        const unsigned nPoints = sourcePoints.size();
+        bool useColoredICP = m_bUseColoredICP && !sourceColors.empty() && !targetColors.empty();
         
-        // Add color constraints if colored ICP is enabled
-        if (useColoredICP && i < sourceColors.size() && i < targetColors.size()) {
-            const auto& sourceColor = sourceColors[i];
-            const auto& targetColor = targetColors[i];
-            float colorWeight = 0.1f;
+        // Determine system size based on whether we're using colored ICP
+        unsigned constraintsPerPoint = useColoredICP ? 7 : 4; // 4 geometric + 3 color constraints
+        MatrixXf A = MatrixXf::Zero(constraintsPerPoint * nPoints, 6);
+        VectorXf b = VectorXf::Zero(constraintsPerPoint * nPoints);
+
+        // Color filtering parameters
+        const float maxColorDiff = 0.3f; // Maximum color difference threshold
+        const float colorWeight = 0.1f;  // Weight for color constraints
+        unsigned validColoredPoints = 0;
+
+        for (unsigned i = 0; i < nPoints; ++i) {
+            const auto& s = sourcePoints[i];
+            const auto& d = targetPoints[i];
+            const auto& n = targetNormals[i];
+
+            // Point-to-plane constraint
+            A(constraintsPerPoint * i, 0) = n.z() * s.y() - n.y() * s.z();
+            A(constraintsPerPoint * i, 1) = n.x() * s.z() - n.z() * s.x();
+            A(constraintsPerPoint * i, 2) = n.y() * s.x() - n.x() * s.y();
+            A.block<1, 3>(constraintsPerPoint * i, 3) = n;
+            b(constraintsPerPoint * i) = (d - s).dot(n);
+
+            // Point-to-point constraints
+            A.block<3, 3>(constraintsPerPoint * i + 1, 0) << 0.0f, s.z(), -s.y(),
+                                                              -s.z(), 0.0f, s.x(),
+                                                               s.y(), -s.x(), 0.0f;
+            A.block<3, 3>(constraintsPerPoint * i + 1, 3).setIdentity();
+            b.segment<3>(constraintsPerPoint * i + 1) = d - s;
             
-            // Color constraints: minimize color difference
-            // We add color as additional constraints that influence the pose
-            // Color difference should be minimized: ||sourceColor - targetColor||
-            Vector3f colorDiff = sourceColor - targetColor;
-            
-            // Add color influence to the geometric constraints
-            // This is a simplified approach - in practice, you might want more sophisticated
-            // color-to-geometry coupling
-            A.block<3, 3>(constraintsPerPoint * i + 4, 0) = colorWeight * Matrix3f::Identity();
-            A.block<3, 3>(constraintsPerPoint * i + 4, 3) = colorWeight * Matrix3f::Identity();
-            b.segment<3>(constraintsPerPoint * i + 4) = colorWeight * colorDiff;
+            // Add color constraints if colored ICP is enabled
+            if (useColoredICP && i < sourceColors.size() && i < targetColors.size()) {
+                const auto& sourceColor = sourceColors[i];
+                const auto& targetColor = targetColors[i];
+                
+                // Calculate color difference
+                Vector3f colorDiff = sourceColor - targetColor;
+                float colorDistance = colorDiff.norm();
+                
+                // Only add color constraints for points with reasonable color similarity
+                if (colorDistance < maxColorDiff) {
+                    // Calculate color similarity weight (exponential decay)
+                    float colorSimilarity = std::exp(-colorDistance / maxColorDiff);
+                    float adaptiveColorWeight = colorWeight * colorSimilarity;
+                    
+                    // Color constraints: minimize color difference with adaptive weighting
+                    // This creates additional geometric constraints influenced by color similarity
+                    A.block<3, 3>(constraintsPerPoint * i + 4, 0) = adaptiveColorWeight * Matrix3f::Identity();
+                    A.block<3, 3>(constraintsPerPoint * i + 4, 3) = adaptiveColorWeight * Matrix3f::Identity();
+                    b.segment<3>(constraintsPerPoint * i + 4) = adaptiveColorWeight * colorDiff;
+                    
+                    validColoredPoints++;
+                } else {
+                    // For points with poor color similarity, use zero color weight
+                    A.block<3, 3>(constraintsPerPoint * i + 4, 0).setZero();
+                    A.block<3, 3>(constraintsPerPoint * i + 4, 3).setZero();
+                    b.segment<3>(constraintsPerPoint * i + 4).setZero();
+                }
+            } else {
+                // No color data available, set color constraints to zero
+                A.block<3, 3>(constraintsPerPoint * i + 4, 0).setZero();
+                A.block<3, 3>(constraintsPerPoint * i + 4, 3).setZero();
+                b.segment<3>(constraintsPerPoint * i + 4).setZero();
+            }
         }
-    }
 
-    
+        // Apply adaptive weighting based on color usage
+        float pointToPlaneWeight = 1.0f;
+        float pointToPointWeight = 0.1f;
+        float colorConstraintWeight = useColoredICP && validColoredPoints > 0 ? 0.5f : 0.0f;
+        
+        // Weight geometric constraints
+        A.block(0, 0, 4 * nPoints, 6) *= pointToPlaneWeight;
+        b.segment(0, 4 * nPoints) *= pointToPlaneWeight;
+        
+        // Weight color constraints if available
+        if (useColoredICP && validColoredPoints > 0) {
+            A.block(4 * nPoints, 0, 3 * nPoints, 6) *= colorConstraintWeight;
+            b.segment(4 * nPoints, 3 * nPoints) *= colorConstraintWeight;
+        }
 
-    // Apply a higher weight to point-to-plane correspondences
-    float pointToPlaneWeight = 1.0f;
-    float pointToPointWeight = 0.1f;
-    A.block(0,0,4*nPoints,6) *= pointToPlaneWeight;
-    b.segment(0,4*nPoints) *= pointToPlaneWeight;
+        // Solve the system
+        MatrixXf ATA = A.transpose() * A;
+        VectorXf ATb = A.transpose() * b;
 
-    // TODO: Solve the system
-    MatrixXf ATA = A.transpose() * A;
-    VectorXf ATb = A.transpose() * b;
+        JacobiSVD<MatrixXf> svd(ATA, ComputeFullU | ComputeFullV);
+        VectorXf x = svd.solve(ATb);
 
-    JacobiSVD<MatrixXf> svd(ATA, ComputeFullU | ComputeFullV);
-    VectorXf x = svd.solve(ATb);
+        // Build the pose matrix
+        float alpha = x(0), beta = x(1), gamma = x(2);
+        Matrix3f rotation = AngleAxisf(alpha, Vector3f::UnitX()).toRotationMatrix()
+                          * AngleAxisf(beta, Vector3f::UnitY()).toRotationMatrix()
+                          * AngleAxisf(gamma, Vector3f::UnitZ()).toRotationMatrix();
 
-    // Build the pose matrix
-    float alpha = x(0), beta = x(1), gamma = x(2);
-    Matrix3f rotation = AngleAxisf(alpha, Vector3f::UnitX()).toRotationMatrix()
-                      * AngleAxisf(beta, Vector3f::UnitY()).toRotationMatrix()
-                      * AngleAxisf(gamma, Vector3f::UnitZ()).toRotationMatrix();
+        Vector3f translation = x.tail(3);
 
+        Matrix4f estimatedPose = Matrix4f::Identity();
+        estimatedPose.block<3,3>(0,0) = rotation;
+        estimatedPose.block<3,1>(0,3) = translation;
 
-    // TODO: Build the pose matrix. Your original code for this was also correct.
-   Vector3f translation=x.tail(3);
-
-   Matrix4f estimatedPose =Matrix4f::Identity();
-   estimatedPose.block<3,3>(0,0) =rotation;
-   estimatedPose.block<3,1>(0,3) =translation;
-
-
-
-    return estimatedPose;
+        return estimatedPose;
     }
 };
 
@@ -1192,7 +1267,6 @@ public:
                 if (matches[j].idx < 0) continue; // Skip invalid matches
 
                 validCorrespondences++;
-                // *** CRITICAL FIX: ***
                 // The optimization should refine the current pose. Therefore, the cost function
                 // needs to be built using the points that were actually matched: the *already transformed*
                 // source points. The solver will then find a small `pose_increment` to apply to these
@@ -1887,6 +1961,11 @@ private:
         MatrixXf A = MatrixXf::Zero(constraintsPerPoint * nPoints, 6);
         VectorXf b = VectorXf::Zero(constraintsPerPoint * nPoints);
 
+        // Color filtering parameters
+        const float maxColorDiff = 0.3f; // Maximum color difference threshold
+        const float colorWeight = 0.1f;  // Weight for color constraints
+        unsigned validColoredPoints = 0;
+
         for (unsigned i = 0; i < nPoints; ++i) {
             const auto& s = sourcePoints[i];
             const auto& d = targetPoints[i];
@@ -1910,21 +1989,52 @@ private:
             if (useColoredICP && i < sourceColors.size() && i < targetColors.size()) {
                 const auto& sourceColor = sourceColors[i];
                 const auto& targetColor = targetColors[i];
-                float colorWeight = 0.1f;
                 
+                // Calculate color difference
                 Vector3f colorDiff = sourceColor - targetColor;
+                float colorDistance = colorDiff.norm();
                 
-                A.block<3, 3>(constraintsPerPoint * i + 4, 0) = colorWeight * Matrix3f::Identity();
-                A.block<3, 3>(constraintsPerPoint * i + 4, 3) = colorWeight * Matrix3f::Identity();
-                b.segment<3>(constraintsPerPoint * i + 4) = colorWeight * colorDiff;
+                // Only add color constraints for points with reasonable color similarity
+                if (colorDistance < maxColorDiff) {
+                    // Calculate color similarity weight (exponential decay)
+                    float colorSimilarity = std::exp(-colorDistance / maxColorDiff);
+                    float adaptiveColorWeight = colorWeight * colorSimilarity;
+                    
+                    // Color constraints: minimize color difference with adaptive weighting
+                    // This creates additional geometric constraints influenced by color similarity
+                    A.block<3, 3>(constraintsPerPoint * i + 4, 0) = adaptiveColorWeight * Matrix3f::Identity();
+                    A.block<3, 3>(constraintsPerPoint * i + 4, 3) = adaptiveColorWeight * Matrix3f::Identity();
+                    b.segment<3>(constraintsPerPoint * i + 4) = adaptiveColorWeight * colorDiff;
+                    
+                    validColoredPoints++;
+                } else {
+                    // For points with poor color similarity, use zero color weight
+                    A.block<3, 3>(constraintsPerPoint * i + 4, 0).setZero();
+                    A.block<3, 3>(constraintsPerPoint * i + 4, 3).setZero();
+                    b.segment<3>(constraintsPerPoint * i + 4).setZero();
+                }
+            } else {
+                // No color data available, set color constraints to zero
+                A.block<3, 3>(constraintsPerPoint * i + 4, 0).setZero();
+                A.block<3, 3>(constraintsPerPoint * i + 4, 3).setZero();
+                b.segment<3>(constraintsPerPoint * i + 4).setZero();
             }
         }
 
-        // Apply weights
+        // Apply adaptive weighting based on color usage
         float pointToPlaneWeight = 1.0f;
         float pointToPointWeight = 0.1f;
-        A.block(0,0,4*nPoints,6) *= pointToPlaneWeight;
-        b.segment(0,4*nPoints) *= pointToPlaneWeight;
+        float colorConstraintWeight = useColoredICP && validColoredPoints > 0 ? 0.5f : 0.0f;
+        
+        // Weight geometric constraints
+        A.block(0, 0, 4 * nPoints, 6) *= pointToPlaneWeight;
+        b.segment(0, 4 * nPoints) *= pointToPlaneWeight;
+        
+        // Weight color constraints if available
+        if (useColoredICP && validColoredPoints > 0) {
+            A.block(4 * nPoints, 0, 3 * nPoints, 6) *= colorConstraintWeight;
+            b.segment(4 * nPoints, 3 * nPoints) *= colorConstraintWeight;
+        }
 
         // Solve the system
         MatrixXf ATA = A.transpose() * A;

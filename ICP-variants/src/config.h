@@ -38,12 +38,12 @@
 #define SHOW_BUNNY_CORRESPONDENCES 0
 
 // ICP Optimizer Selection (only one should be 1)
-#define USE_POINT_TO_PLANE 1
-#define USE_LINEAR_ICP 0
-#define USE_LM_ICP 1
+#define USE_POINT_TO_PLANE 0
+#define USE_LINEAR_ICP 1
+#define USE_LM_ICP 0
 #define USE_SYMMETRIC_ICP 0
 #define USE_HIERARCHICAL_ICP 0
-#define USE_COLORED_ICP 0
+#define USE_COLORED_ICP 1
 
 // Test Scenario Selection
 #define RUN_SHAPE_ICP 0
