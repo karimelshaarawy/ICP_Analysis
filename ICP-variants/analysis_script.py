@@ -291,35 +291,50 @@ class ICPAnalyzer:
         
         # Set up the plotting style
         plt.style.use('seaborn-v0_8')
-        sns.set_palette("husl")
         
         # Create figure with subplots
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig, axes = plt.subplots(1, 2, figsize=(18, 8))
         fig.suptitle('ICP Performance Analysis', fontsize=16, fontweight='bold')
         
         # 1. Accuracy comparison (RMSE)
-        self.plot_accuracy_comparison(axes[0, 0], results)
+        self.plot_accuracy_comparison(axes[0], results)
         
         # 2. Speed comparison (computation time)
-        self.plot_speed_comparison(axes[0, 1], results)
+        self.plot_speed_comparison(axes[1], results)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        plot_file = self.results_dir / f"icp_analysis_plots_{timestamp}_1.png"
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        
+        #reset
+        fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+        fig.suptitle('ICP Performance Analysis', fontsize=16, fontweight='bold')
         
         # 3. Correspondence accuracy rate
-        self.plot_correspondence_accuracy(axes[0, 2], results)
+        self.plot_correspondence_accuracy(axes[0], results)
+        
+        
         
         # 4. Accuracy vs Speed trade-off
-        self.plot_accuracy_vs_speed(axes[1, 0], results)
+        self.plot_accuracy_vs_speed(axes[1], results)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        plot_file = self.results_dir / f"icp_analysis_plots_{timestamp}_2.png"
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+         #reset
+        fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+        fig.suptitle('ICP Performance Analysis', fontsize=16, fontweight='bold')
         
         # 5. Downsampling impact (for LinearICP)
-        self.plot_downsampling_impact(axes[1, 1], results)
+        self.plot_downsampling_impact(axes[0], results)
         
-        # 6. Colored vs Non-colored comparison
-        self.plot_colored_comparison(axes[1, 2], results)
+    # 6. Colored vs Non-colored comparison
+        self.plot_colored_comparison(axes[1], results)
         
         plt.tight_layout()
         
         # Save the plot
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plot_file = self.results_dir / f"icp_analysis_plots_{timestamp}.png"
+        plot_file = self.results_dir / f"icp_analysis_plots_{timestamp}_3.png"
         plt.savefig(plot_file, dpi=300, bbox_inches='tight')
         print(f"Plots saved to: {plot_file}")
         
@@ -330,111 +345,116 @@ class ICPAnalyzer:
         """Plot RMSE comparison across different ICP methods"""
         configs = [r['config_name'] for r in results]
         rmses = [r.get('final_rmse', 0) for r in results]
-        
-        # Filter out None values and ensure we have valid data
-        valid_data = [(config, rmse) for config, rmse in zip(configs, rmses) 
-                      if rmse is not None and not np.isnan(rmse) and rmse > 0]
-        
+
+        # Filter valid data
+        valid_data = [(c, r) for c, r in zip(configs, rmses) if r is not None and not np.isnan(r) and r > 0]
         if not valid_data:
-            ax.text(0.5, 0.5, 'No valid RMSE data available', 
-                   ha='center', va='center', transform=ax.transAxes)
+            ax.text(0.5, 0.5, 'No valid RMSE data available', ha='center', va='center', transform=ax.transAxes)
             ax.set_title('Final RMSE Comparison (No Data)')
             return
-        
+
         valid_configs, valid_rmses = zip(*valid_data)
-        
-        bars = ax.bar(range(len(valid_configs)), valid_rmses, alpha=0.7)
+        distinct_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+                       '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
+                       '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
+                       '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080']
+
+        colors = distinct_colors[:len(valid_configs)]  # pick as many as needed
+
+        bars = ax.bar(range(len(valid_configs)), valid_rmses, alpha=0.7, color=colors)
         ax.set_title('Final RMSE Comparison')
         ax.set_ylabel('RMSE')
         ax.set_xlabel('ICP Configuration')
-        
-        # Rotate x-axis labels for better readability
         ax.set_xticks(range(len(valid_configs)))
         ax.set_xticklabels(valid_configs, rotation=45, ha='right')
-        
-        # Add value labels on bars
+
         for bar, rmse in zip(bars, valid_rmses):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001,
-                   f'{rmse:.4f}', ha='center', va='bottom', fontsize=8)
-    
+                    f'{rmse:.4f}', ha='center', va='bottom', fontsize=8)
+
+
     def plot_speed_comparison(self, ax, results):
         """Plot computation time comparison"""
         configs = [r['config_name'] for r in results]
         times = [r.get('total_time', 0) for r in results]
-        
-        # Filter out None values and ensure we have valid data
-        valid_data = [(config, time_val) for config, time_val in zip(configs, times) 
-                      if time_val is not None and not np.isnan(time_val) and time_val > 0]
-        
+
+        valid_data = [(c, t) for c, t in zip(configs, times) if t is not None and not np.isnan(t) and t > 0]
         if not valid_data:
-            ax.text(0.5, 0.5, 'No valid time data available', 
-                   ha='center', va='center', transform=ax.transAxes)
+            ax.text(0.5, 0.5, 'No valid time data available', ha='center', va='center', transform=ax.transAxes)
             ax.set_title('Computation Time Comparison (No Data)')
             return
-        
+
         valid_configs, valid_times = zip(*valid_data)
-        
-        bars = ax.bar(range(len(valid_configs)), valid_times, alpha=0.7, color='orange')
+
+        colors = plt.cm.Set2(np.linspace(0, 1, len(valid_configs)))  # Different colormap
+        bars = ax.bar(range(len(valid_configs)), valid_times, alpha=0.7, color=colors)
         ax.set_title('Computation Time Comparison')
         ax.set_ylabel('Time (seconds)')
         ax.set_xlabel('ICP Configuration')
-        
         ax.set_xticks(range(len(valid_configs)))
         ax.set_xticklabels(valid_configs, rotation=45, ha='right')
-        
-        # Add value labels
+
         for bar, time_val in zip(bars, valid_times):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
-                   f'{time_val:.2f}s', ha='center', va='bottom', fontsize=8)
-    
+                    f'{time_val:.2f}s', ha='center', va='bottom', fontsize=8)
+
+
     def plot_correspondence_accuracy(self, ax, results):
         """Plot correspondence accuracy rate"""
         configs = [r['config_name'] for r in results]
         accuracies = [r.get('correspondence_accuracy_rate', 0) for r in results]
-        
-        bars = ax.bar(range(len(configs)), accuracies, alpha=0.7, color='green')
+        distinct_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+                       '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
+                       '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
+                       '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080']
+
+        colors = distinct_colors[:len(configs)]  # pick as many as needed
+        bars = ax.bar(range(len(configs)), accuracies, alpha=0.7, color=colors)
         ax.set_title('Correspondence Accuracy Rate')
         ax.set_ylabel('Accuracy Rate')
         ax.set_xlabel('ICP Configuration')
-        
         ax.set_xticks(range(len(configs)))
         ax.set_xticklabels(configs, rotation=45, ha='right')
-        
-        # Add percentage labels
+
         for bar, acc in zip(bars, accuracies):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                   f'{acc:.2%}', ha='center', va='bottom', fontsize=8)
-    
+                    f'{acc:.2%}', ha='center', va='bottom', fontsize=8)
+
+
     def plot_accuracy_vs_speed(self, ax, results):
         """Plot accuracy vs speed trade-off"""
         rmses = [r.get('final_rmse', 0) for r in results]
         times = [r.get('total_time', 0) for r in results]
         configs = [r['config_name'] for r in results]
-        
-        scatter = ax.scatter(times, rmses, alpha=0.7, s=100)
+        distinct_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+                       '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
+                       '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
+                       '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080']
+
+        colors = distinct_colors[:len(configs)]  # pick as many as needed
+        scatter = ax.scatter(times, rmses, alpha=0.7, s=100, c=colors)
         ax.set_title('Accuracy vs Speed Trade-off')
         ax.set_xlabel('Computation Time (seconds)')
         ax.set_ylabel('RMSE')
-        
-        # Add labels for some points
+
         for i, config in enumerate(configs):
             if i % 3 == 0:  # Label every 3rd point to avoid clutter
-                ax.annotate(config, (times[i], rmses[i]), 
-                           xytext=(5, 5), textcoords='offset points', fontsize=8)
-    
+                ax.annotate(config, (times[i], rmses[i]),
+                            xytext=(5, 5), textcoords='offset points', fontsize=8)
+
+
     def plot_downsampling_impact(self, ax, results):
         """Plot impact of downsampling on LinearICP"""
         linear_results = [r for r in results if 'LinearICP' in r['config_name']]
-        
+
         if not linear_results:
             ax.text(0.5, 0.5, 'No LinearICP results', ha='center', va='center', transform=ax.transAxes)
             return
-        
-        # Group by downsampling level
+
         low_results = [r for r in linear_results if 'Low' in r['config_name']]
         medium_results = [r for r in linear_results if 'Medium' in r['config_name']]
         high_results = [r for r in linear_results if 'High' in r['config_name']]
-        
+
         categories = ['Low', 'Medium', 'High']
         rmses = [
             np.mean([r.get('final_rmse', 0) for r in low_results]) if low_results else 0,
@@ -442,52 +462,51 @@ class ICPAnalyzer:
             np.mean([r.get('final_rmse', 0) for r in high_results]) if high_results else 0
         ]
         
-        bars = ax.bar(categories, rmses, alpha=0.7, color=['blue', 'orange', 'red'])
+
+        colors = ['#1f77b4', '#ff7f0e', '#d62728']  # Blue, orange, red
+        bars = ax.bar(categories, rmses, alpha=0.7, color=colors)
         ax.set_title('LinearICP: Downsampling Impact on Accuracy')
         ax.set_ylabel('RMSE')
         ax.set_xlabel('Downsampling Level')
-        
-        # Add value labels
+
         for bar, rmse in zip(bars, rmses):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001,
-                   f'{rmse:.4f}', ha='center', va='bottom')
-    
+                    f'{rmse:.4f}', ha='center', va='bottom')
+
+
     def plot_colored_comparison(self, ax, results):
         """Plot colored vs non-colored ICP comparison"""
-        # Separate colored and non-colored results
         colored_results = [r for r in results if 'Colored' in r['config_name']]
         non_colored_results = [r for r in results if 'Colored' not in r['config_name']]
-        
+
         if not colored_results or not non_colored_results:
             ax.text(0.5, 0.5, 'Insufficient data for comparison', ha='center', va='center', transform=ax.transAxes)
             return
-        
-        # Calculate average metrics
+
         colored_rmse = np.mean([r.get('final_rmse', 0) for r in colored_results])
         non_colored_rmse = np.mean([r.get('final_rmse', 0) for r in non_colored_results])
-        
+
         colored_time = np.mean([r.get('total_time', 0) for r in colored_results])
         non_colored_time = np.mean([r.get('total_time', 0) for r in non_colored_results])
-        
+
         categories = ['Non-Colored', 'Colored']
         rmses = [non_colored_rmse, colored_rmse]
         times = [non_colored_time, colored_time]
-        
+
         x = np.arange(len(categories))
         width = 0.35
-        
-        bars1 = ax.bar(x - width/2, rmses, width, label='RMSE', alpha=0.7)
+
+        bars1 = ax.bar(x - width / 2, rmses, width, label='RMSE', alpha=0.7, color=plt.cm.Paired([0, 2]))
         ax2 = ax.twinx()
-        bars2 = ax2.bar(x + width/2, times, width, label='Time (s)', alpha=0.7, color='orange')
-        
+        bars2 = ax2.bar(x + width / 2, times, width, label='Time (s)', alpha=0.7, color='orange')
+
         ax.set_title('Colored vs Non-Colored ICP Comparison')
         ax.set_ylabel('RMSE')
         ax2.set_ylabel('Time (seconds)')
         ax.set_xlabel('ICP Type')
         ax.set_xticks(x)
         ax.set_xticklabels(categories)
-        
-        # Add legends
+
         ax.legend(loc='upper left')
         ax2.legend(loc='upper right')
     

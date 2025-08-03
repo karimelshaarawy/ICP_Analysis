@@ -32,8 +32,8 @@ unsigned int getDownsampleFactor(const std::string& level) {
 
 void debugCorrespondenceMatching() {
 	// Load the source and target mesh.
-	const std::string filenameSource = std::string("../../Data/bunny_part2_trans.off");
-	const std::string filenameTarget = std::string("../../Data/bunny_part1.off");
+	const std::string filenameSource = std::string("/config/workspace/Exercises/Project/ICP_Analysis/Data/Data/bunny_part2_trans.off");
+	const std::string filenameTarget = std::string("/config/workspace/Exercises/Project/ICP_Analysis/Data/Data/bunny_part1.off");
 
 	SimpleMesh sourceMesh;
 	if (!sourceMesh.loadMesh(filenameSource)) {
@@ -75,8 +75,8 @@ void debugCorrespondenceMatching() {
 
 int alignBunnyWithICP() {
 	// Load the source and target mesh.
-	const std::string filenameSource = std::string("/config/workspace/ICP_Analysis /Data/Data/bunny_part2_trans.off");
-	const std::string filenameTarget = std::string("/config/workspace/ICP_Analysis /Data/Data/bunny_part1.off");
+	const std::string filenameSource = std::string("/config/workspace/Exercises/Project/ICP_Analysis/Data/Data/bunny_part2_trans.off");
+	const std::string filenameTarget = std::string("/config/workspace/Exercises/Project/ICP_Analysis/Data/Data/bunny_part1.off");
 
 	SimpleMesh sourceMesh;
 	if (!sourceMesh.loadMesh(filenameSource)) {
@@ -197,11 +197,11 @@ int reconstructRoom() {
     optimizer->setMatchingMaxDistance(0.0003f);
     if (USE_POINT_TO_PLANE) {
         optimizer->usePointToPlaneConstraints(true);
-        optimizer->setNbOfIterations(15);
+        optimizer->setNbOfIterations(10);
     }
     else {
         optimizer->usePointToPlaneConstraints(false);
-        optimizer->setNbOfIterations(15);
+        optimizer->setNbOfIterations(10);
     }
     
     // Enable colored ICP if flag is set

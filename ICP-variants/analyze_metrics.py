@@ -105,10 +105,11 @@ def create_visualizations(df):
     
     # 1. RMSE vs Iteration
     ax1 = axes[0, 0]
+    colors = plt.cm.Set1(np.linspace(0, 1, len(optimizers)))
     for i, optimizer in enumerate(optimizers):
         opt_data = df[df['Optimizer'] == optimizer]
         ax1.plot(opt_data['Iteration'], opt_data['RMSE'], 
-                marker='o', label=optimizer, color=colors[i])
+                marker='o', label=optimizer, color=colors[i], linewidth=2, markersize=6)
     ax1.set_xlabel('Iteration')
     ax1.set_ylabel('RMSE')
     ax1.set_title('RMSE vs Iteration')
@@ -117,10 +118,11 @@ def create_visualizations(df):
     
     # 2. Mean Distance vs Iteration
     ax2 = axes[0, 1]
+    colors = plt.cm.Set1(np.linspace(0, 1, len(optimizers)))
     for i, optimizer in enumerate(optimizers):
         opt_data = df[df['Optimizer'] == optimizer]
         ax2.plot(opt_data['Iteration'], opt_data['MeanDistance'], 
-                marker='s', label=optimizer, color=colors[i])
+                marker='s', label=optimizer, color=colors[i], linewidth=2, markersize=6)
     ax2.set_xlabel('Iteration')
     ax2.set_ylabel('Mean Distance')
     ax2.set_title('Mean Distance vs Iteration')
@@ -129,10 +131,11 @@ def create_visualizations(df):
     
     # 3. Valid Correspondences vs Iteration
     ax3 = axes[0, 2]
+    colors = plt.cm.Set3(np.linspace(0, 1, len(optimizers)))
     for i, optimizer in enumerate(optimizers):
         opt_data = df[df['Optimizer'] == optimizer]
         ax3.plot(opt_data['Iteration'], opt_data['ValidCorrespondences'], 
-                marker='^', label=optimizer, color=colors[i])
+                marker='^', label=optimizer, color=colors[i], linewidth=2, markersize=6)
     ax3.set_xlabel('Iteration')
     ax3.set_ylabel('Valid Correspondences')
     ax3.set_title('Valid Correspondences vs Iteration')
@@ -141,10 +144,11 @@ def create_visualizations(df):
     
     # 4. Computation Time vs Iteration
     ax4 = axes[1, 0]
+    colors = plt.cm.Accent(np.linspace(0, 1, len(optimizers)))
     for i, optimizer in enumerate(optimizers):
         opt_data = df[df['Optimizer'] == optimizer]
         ax4.plot(opt_data['Iteration'], opt_data['ComputationTime'], 
-                marker='d', label=optimizer, color=colors[i])
+                marker='d', label=optimizer, color=colors[i], linewidth=2, markersize=6)
     ax4.set_xlabel('Iteration')
     ax4.set_ylabel('Computation Time (s)')
     ax4.set_title('Computation Time vs Iteration')
@@ -153,10 +157,11 @@ def create_visualizations(df):
     
     # 5. Standard Deviation vs Iteration
     ax5 = axes[1, 1]
+    colors = plt.cm.Dark2(np.linspace(0, 1, len(optimizers)))
     for i, optimizer in enumerate(optimizers):
         opt_data = df[df['Optimizer'] == optimizer]
         ax5.plot(opt_data['Iteration'], opt_data['StdDeviation'], 
-                marker='*', label=optimizer, color=colors[i])
+                marker='*', label=optimizer, color=colors[i], linewidth=2, markersize=8)
     ax5.set_xlabel('Iteration')
     ax5.set_ylabel('Standard Deviation')
     ax5.set_title('Standard Deviation vs Iteration')
@@ -165,20 +170,22 @@ def create_visualizations(df):
     
     # 6. Box plot of final RMSE values
     ax6 = axes[1, 2]
+    colors = plt.cm.Paired(np.linspace(0, 1, len(optimizers)))
     final_rmse_data = []
     labels = []
-    for optimizer in optimizers:
+    bar_colors = []
+    for i, optimizer in enumerate(optimizers):
         opt_data = df[df['Optimizer'] == optimizer]
         if len(opt_data) > 0:
             final_rmse_data.append(opt_data.iloc[-1]['RMSE'])
             labels.append(optimizer)
+            bar_colors.append(colors[i])
     
     if final_rmse_data:
-        ax6.bar(labels, final_rmse_data, color=colors[:len(labels)])
+        ax6.bar(labels, final_rmse_data, color=bar_colors, alpha=0.8, edgecolor='black', linewidth=1)
         ax6.set_ylabel('Final RMSE')
         ax6.set_title('Final RMSE Comparison')
         ax6.tick_params(axis='x', rotation=45)
-    
     plt.tight_layout()
     plt.savefig('icp_metrics_analysis.png', dpi=300, bbox_inches='tight')
     print("Visualization saved as 'icp_metrics_analysis.png'")

@@ -418,20 +418,37 @@ public:
     { }
 
     template <typename T>
-    bool operator()(const T* const pose, T* residuals) const {
-        T source_point[3];
-        fillVector(m_sourcePoint,source_point);
-        PoseIncrement<T> poseIncrement =PoseIncrement<T>(const_cast< T* const>(pose));
-        T sourcePointTransformed[3];
-        poseIncrement.apply(source_point,sourcePointTransformed);
+bool operator()(const T* const pose_increment, T* residuals) const {
+    // Convert source point to T
+    T source_point_T[3] = {
+        T(m_sourcePoint[0]),
+        T(m_sourcePoint[1]),
+        T(m_sourcePoint[2])
+    };
 
-        residuals[0]= T(m_weight) * (
-            (sourcePointTransformed[0] - T(m_targetPoint[0])) * T(m_targetNormal[0]) +
-            (sourcePointTransformed[1] - T(m_targetPoint[1])) * T(m_targetNormal[1]) +
-            (sourcePointTransformed[2] - T(m_targetPoint[2])) * T(m_targetNormal[2])
-        );
-        return true;
-    }
+    // Apply rotation using AngleAxis and then add translation
+    T transformed_point_T[3];
+    ceres::AngleAxisRotatePoint(pose_increment, source_point_T, transformed_point_T);
+    transformed_point_T[0] += pose_increment[3];
+    transformed_point_T[1] += pose_increment[4];
+    transformed_point_T[2] += pose_increment[5];
+
+    // Compute the difference vector between transformed source and target
+    T diff[3] = {
+        transformed_point_T[0] - T(m_targetPoint[0]),
+        transformed_point_T[1] - T(m_targetPoint[1]),
+        transformed_point_T[2] - T(m_targetPoint[2])
+    };
+
+    // Compute dot product with normal, scaled by weight
+    residuals[0] = T(m_weight) * (
+        T(m_targetNormal[0]) * diff[0] +
+        T(m_targetNormal[1]) * diff[1] +
+        T(m_targetNormal[2]) * diff[2]
+    );
+
+    return true;
+}
 
     static ceres::CostFunction* create(const Vector3f& sourcePoint, const Vector3f& targetPoint, const Vector3f& targetNormal, const float weight) {
         return new ceres::AutoDiffCostFunction<PointToPlaneConstraint, 1, 6>(

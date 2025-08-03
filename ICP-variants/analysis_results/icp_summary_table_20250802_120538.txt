@@ -1,0 +1,28 @@
+ICP Performance Analysis Summary
+==================================================
+
+Ranking by Final RMSE (Best to Worst):
+----------------------------------------
+ 1. LinearICP_PointToPlane_Low          | RMSE:   0.0241 | Time:   0.45s | Acc: 67.55%
+ 2. LinearICP_PointToPlane_Medium       | RMSE:   0.0241 | Time:   0.45s | Acc: 67.55%
+ 3. LinearICP_PointToPlane_High         | RMSE:   0.0241 | Time:   0.46s | Acc: 67.55%
+ 4. LinearICP_Colored_PointToPlane_Low  | RMSE:   0.0241 | Time:   0.45s | Acc: 67.55%
+ 5. LMICP_PointToPoint                  | RMSE:   0.0241 | Time:   0.82s | Acc: 67.08%
+ 6. LMICP_Colored_PointToPoint          | RMSE:   0.0241 | Time:   0.78s | Acc: 67.08%
+ 7. LinearICP_PointToPoint_Low          | RMSE:   0.0241 | Time:   0.46s | Acc: 66.98%
+ 8. LinearICP_PointToPoint_Medium       | RMSE:   0.0241 | Time:   0.53s | Acc: 66.98%
+ 9. LinearICP_PointToPoint_High         | RMSE:   0.0241 | Time:   0.47s | Acc: 66.98%
+10. LinearICP_Colored_PointToPoint_Low  | RMSE:   0.0241 | Time:   0.49s | Acc: 66.98%
+11. LMICP_PointToPlane                  | RMSE:   0.0267 | Time:   1.20s | Acc: 70.97%
+12. LMICP_Colored_PointToPlane          | RMSE:   0.0267 | Time:   1.22s | Acc: 70.97%
+13. SymmetricICP_PointToPlane           | RMSE:   0.0322 | Time:   0.95s | Acc: 78.46%
+14. SymmetricICP_Colored_PointToPlane   | RMSE:   0.0322 | Time:   0.97s | Acc: 78.46%
+15. SymmetricICP_PointToPoint           | RMSE:   0.0328 | Time:   0.77s | Acc: 78.56%
+16. SymmetricICP_Colored_PointToPoint   | RMSE:   0.0328 | Time:   0.75s | Acc: 78.56%
+
+==================================================
+Best Performance by Category:
+------------------------------
+LinearICP: LinearICP_PointToPlane_Low (RMSE: 0.0241)
+LMICP: LMICP_PointToPoint (RMSE: 0.0241)
+SymmetricICP: SymmetricICP_PointToPlane (RMSE: 0.0322)
