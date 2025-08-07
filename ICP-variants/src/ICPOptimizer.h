@@ -542,30 +542,42 @@ public:
     { }
 
     template <typename T>
-    bool operator()(const T* const pose, T* residuals) const {
-        T source_point[3];
-        fillVector(m_sourcePoint, source_point);
+    bool operator()(const T* const pose_increment, T* residuals) const {
+        // The pose_increment is a 6-element array:
+        // - First 3 elements are an angle-axis rotation vector.
+        // - Last 3 elements are a translation vector.
         
-        T target_point[3];
-        fillVector(m_targetPoint, target_point);
+        T source_point_T[3] = {T(m_sourcePoint.x()), T(m_sourcePoint.y()), T(m_sourcePoint.z())};
+        T target_point_T[3] = {T(m_targetPoint.x()), T(m_targetPoint.y()), T(m_targetPoint.z())};
         
-        PoseIncrement<T> poseIncrement = PoseIncrement<T>(const_cast<T* const>(pose));
+        // Apply rotation to source point
+        T transformed_source_point_T[3];
+        ceres::AngleAxisRotatePoint(pose_increment, source_point_T, transformed_source_point_T);
         
-        T sourcePointTransformed[3];
-        poseIncrement.apply(source_point, sourcePointTransformed);
+        // Apply translation to source point
+        transformed_source_point_T[0] += pose_increment[3];
+        transformed_source_point_T[1] += pose_increment[4];
+        transformed_source_point_T[2] += pose_increment[5];
         
-        T targetPointTransformed[3];
-        poseIncrement.applyInverse(target_point, targetPointTransformed);
+        // Apply inverse rotation to target point
+        T inverse_pose[3] = {-pose_increment[0], -pose_increment[1], -pose_increment[2]};
+        T transformed_target_point_T[3];
+        ceres::AngleAxisRotatePoint(inverse_pose, target_point_T, transformed_target_point_T);
+        
+        // Apply inverse translation to target point
+        transformed_target_point_T[0] -= pose_increment[3];
+        transformed_target_point_T[1] -= pose_increment[4];
+        transformed_target_point_T[2] -= pose_increment[5];
         
         // First constraint: transformed source point to target plane
-        T residual1 = (sourcePointTransformed[0] - T(m_targetPoint[0])) * T(m_targetNormal[0]) +
-                      (sourcePointTransformed[1] - T(m_targetPoint[1])) * T(m_targetNormal[1]) +
-                      (sourcePointTransformed[2] - T(m_targetPoint[2])) * T(m_targetNormal[2]);
+        T residual1 = (transformed_source_point_T[0] - T(m_targetPoint.x())) * T(m_targetNormal.x()) +
+                      (transformed_source_point_T[1] - T(m_targetPoint.y())) * T(m_targetNormal.y()) +
+                      (transformed_source_point_T[2] - T(m_targetPoint.z())) * T(m_targetNormal.z());
         
         // Second constraint: inverse-transformed target point to source plane  
-        T residual2 = (targetPointTransformed[0] - T(m_sourcePoint[0])) * T(m_sourceNormal[0]) +
-                      (targetPointTransformed[1] - T(m_sourcePoint[1])) * T(m_sourceNormal[1]) +
-                      (targetPointTransformed[2] - T(m_sourcePoint[2])) * T(m_sourceNormal[2]);
+        T residual2 = (transformed_target_point_T[0] - T(m_sourcePoint.x())) * T(m_sourceNormal.x()) +
+                      (transformed_target_point_T[1] - T(m_sourcePoint.y())) * T(m_sourceNormal.y()) +
+                      (transformed_target_point_T[2] - T(m_sourcePoint.z())) * T(m_sourceNormal.z());
         
         residuals[0] = T(m_weight) * residual1;
         residuals[1] = T(m_weight) * residual2;
@@ -1639,17 +1651,17 @@ private:
                                          const std::vector<Eigen::Vector3f>& sourceColors = std::vector<Eigen::Vector3f>(),
                                          const std::vector<Eigen::Vector3f>& targetColors = std::vector<Eigen::Vector3f>()) {
         
-        // Use regular point-to-plane constraints (not symmetric)
+        // Use symmetric point-to-plane constraints for alternating symmetric ICP
         std::fill(std::begin(m_poseIncrement), std::end(m_poseIncrement), 0.0);
 
         resetCeresProblem(); 
 
-
         for (size_t i = 0; i < sourcePoints.size(); ++i) {
-            if (i >= targetNormals.size()) continue;
+            // Check bounds for both source and target normals
+            if (i >= targetNormals.size() || i >= sourceNormals.size()) continue;
 
             if (m_bUseColoredICP && !sourceColors.empty() && !targetColors.empty() && i < sourceColors.size() && i < targetColors.size()) {
-                // Use colored point-to-plane constraint
+                // Use colored symmetric point-to-plane constraint
                 ceres::CostFunction* cost_function =
                     ColoredPointToPlaneConstraint::create(
                         sourcePoints[i],
@@ -1664,12 +1676,13 @@ private:
                 auto residual = m_problem.AddResidualBlock(cost_function, loss_function, m_poseIncrement);
                 m_residualBlocks.push_back(residual);
             } else {
-                // Use standard point-to-plane constraint
+                // Use symmetric point-to-plane constraint (both source and target normals)
                 ceres::CostFunction* cost_function =
-                    PointToPlaneConstraint::create(
+                    SymmetricPointToPlaneConstraint::create(
                         sourcePoints[i],
                         targetPoints[i],
-                        targetNormals[i],  // Use target normal for the plane
+                        sourceNormals[i],  // Source normal
+                        targetNormals[i],  // Target normal
                         1.0
                     );
                 auto* loss_function = new ceres::HuberLoss(0.1);
