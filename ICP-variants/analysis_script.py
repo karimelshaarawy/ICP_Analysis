@@ -4,6 +4,9 @@ ICP Performance Analysis Script
 Analyzes different ICP variants and generates comprehensive reports with visualizations.
 """
 
+# =============================================================================
+# IMPORTS AND DEPENDENCIES
+# =============================================================================
 import subprocess
 import os
 import sys
@@ -18,28 +21,44 @@ from datetime import datetime
 from pathlib import Path
 import argparse
 
+# =============================================================================
+# MAIN ANALYZER CLASS
+# =============================================================================
 class ICPAnalyzer:
+    """
+    Main class responsible for:
+    1. Managing ICP configurations
+    2. Compiling and running tests
+    3. Collecting performance metrics
+    4. Generating analysis reports and visualizations
+    """
+    
     def __init__(self, build_dir="src/build", results_dir="analysis_results"):
+        """Initialize analyzer with build and results directories"""
         self.build_dir = Path(build_dir)
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(exist_ok=True)
         
-        # ICP configurations to test - all 16 configurations
+        # Load all 16 ICP configurations from external config generator
         from generate_config import get_icp_configs
         self.icp_configs = get_icp_configs()
         
-        # Update all configurations to use bunny alignment for faster testing
+        # Configure for bunny alignment testing (faster than full room reconstruction)
         for config in self.icp_configs:
             config["RUN_SHAPE_ICP"] = 1
             config["RUN_SEQUENCE_ICP"] = 0
         
-        # Analysis parameters
-        self.num_runs = 3  # Number of runs per configuration
-        self.max_iterations = 10  # Reduced for speed
-        self.test_scenario = "room_reconstruction"  # Using room reconstruction
+        # Set testing parameters
+        self.num_runs = 3  # Statistical significance through multiple runs
+        self.max_iterations = 10  # Reduced for faster testing
+        self.test_scenario = "room_reconstruction"
         
+    # =========================================================================
+    # CONFIGURATION AND COMPILATION METHODS
+    # =========================================================================
+    
     def update_config(self, config):
-        """Generate config.h with the given configuration"""
+        """Generate C++ config.h header file with the given configuration"""
         from generate_config import generate_config
         
         try:
@@ -51,13 +70,15 @@ class ICPAnalyzer:
             return False
     
     def compile_project(self):
-        """Compile the C++ project"""
+        """Clean and compile the C++ ICP project using make"""
         try:
+            # Clean previous build
             result = subprocess.run(
                 ["make", "-C", str(self.build_dir), "clean"],
                 capture_output=True, text=True
             )
             
+            # Compile with new configuration
             result = subprocess.run(
                 ["make", "-C", str(self.build_dir)],
                 capture_output=True, text=True
@@ -71,9 +92,12 @@ class ICPAnalyzer:
             print(f"Compilation error: {e}")
             return False
     
+    # =========================================================================
+    # TEST EXECUTION AND METRICS COLLECTION
+    # =========================================================================
+    
     def run_icp_test(self, config_name):
-        """Run a single ICP test and return metrics"""
-        # Use the correct executable path
+        """Execute a single ICP test and capture performance metrics"""
         executable = Path.cwd() / "src" / "build" / "exercise_5"
         
         if not executable.exists():
@@ -81,23 +105,23 @@ class ICPAnalyzer:
             return None
         
         try:
-            # Run the ICP executable from the build directory where data files are located
+            # Time the execution and capture output
             start_time = time.time()
             result = subprocess.run(
                 [str(executable)],
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 minute timeout for room reconstruction
-                cwd=str(self.build_dir)  # Run from build directory
+                timeout=600,  # 10 minute timeout for complex reconstructions
+                cwd=str(self.build_dir)  # Run from build directory where data files are located
             )
             end_time = time.time()
             
             if result.returncode != 0:
                 print(f"Execution failed for {config_name}: {result.stderr}")
-                print(f"STDOUT: {result.stdout[:500]}...")  # Print first 500 chars of stdout for debugging
+                print(f"STDOUT: {result.stdout[:500]}...")
                 return None
             
-            # Parse metrics from output
+            # Extract performance metrics from program output
             print(f"STDOUT length: {len(result.stdout)}")
             print(f"STDOUT preview: {result.stdout[:200]}...")
             metrics = self.parse_metrics(result.stdout, end_time - start_time)
@@ -113,7 +137,8 @@ class ICPAnalyzer:
             return None
     
     def parse_metrics(self, output, total_time):
-        """Parse metrics from ICP output"""
+        """Parse performance metrics from ICP program output"""
+        # Initialize metrics dictionary with all possible measurements
         metrics = {
             'total_time': total_time,
             'final_rmse': None,
@@ -128,22 +153,21 @@ class ICPAnalyzer:
             'correspondence_accuracy_rate': None
         }
         
-        # Parse the output to extract final metrics
+        # Parse output to find the last (final) metrics section
         lines = output.split('\n')
         
-        # Look for the last metrics section (any iteration)
         for line in reversed(lines):
             if "=== ICP Metrics" in line:
-                # Extract metrics from the following lines
                 metrics = self.extract_metrics_from_output(lines, metrics)
                 break
         
         return metrics
     
     def extract_metrics_from_output(self, lines, metrics):
-        """Extract specific metrics from the output lines"""
+        """Extract specific numeric values from program output lines"""
         for i, line in enumerate(lines):
             line = line.strip()
+            # Parse each metric type using string matching and extraction
             if "RMSE:" in line:
                 try:
                     metrics['final_rmse'] = float(line.split("RMSE:")[1].strip())
@@ -197,26 +221,31 @@ class ICPAnalyzer:
         
         return metrics
     
+    # =========================================================================
+    # MAIN ANALYSIS ORCHESTRATION
+    # =========================================================================
+    
     def run_analysis(self):
-        """Run the complete analysis"""
+        """Main method that orchestrates the complete analysis workflow"""
         print("Starting ICP Performance Analysis...")
         print(f"Testing {len(self.icp_configs)} configurations with {self.num_runs} runs each")
         
         all_results = []
         
+        # Test each ICP configuration
         for config in self.icp_configs:
             config_name = config['name']
             print(f"\n--- Testing {config_name} ---")
             
-            # Generate config.h with this configuration
+            # 1. Generate configuration header file
             self.update_config(config)
             
-            # Compile the project
+            # 2. Compile project with new configuration
             if not self.compile_project():
                 print(f"Failed to compile for {config_name}, skipping...")
                 continue
             
-            # Run multiple times for statistical significance
+            # 3. Run multiple test iterations for statistical reliability
             config_results = []
             for run in range(self.num_runs):
                 print(f"  Run {run + 1}/{self.num_runs}")
@@ -225,39 +254,35 @@ class ICPAnalyzer:
                     result['run'] = run + 1
                     config_results.append(result)
             
+            # 4. Calculate average performance across runs
             if config_results:
-                # Calculate average metrics for this configuration
                 avg_result = self.calculate_average_metrics(config_results)
                 all_results.append(avg_result)
                 
                 print(f"  Completed {len(config_results)} runs for {config_name}")
         
-        # Save results
+        # 5. Save raw results and generate analysis outputs
         self.save_results(all_results)
-        
-        # Generate visualizations
         self.generate_visualizations(all_results)
         
         print(f"\nAnalysis complete! Results saved to {self.results_dir}")
     
     def calculate_average_metrics(self, config_results):
-        """Calculate average metrics across multiple runs"""
+        """Calculate statistical averages and standard deviations across multiple runs"""
         if not config_results:
             return None
         
-        # For single runs, just return the first result without std fields
+        # Single run case - return as-is without std calculations
         if len(config_results) == 1:
             result = config_results[0].copy()
-            # Remove any existing _std fields
             keys_to_remove = [k for k in result.keys() if k.endswith('_std')]
             for key in keys_to_remove:
                 del result[key]
             return result
         
-        # For multiple runs, calculate averages and standard deviations
+        # Multiple runs - calculate means and standard deviations
         avg_result = config_results[0].copy()
         
-        # Calculate averages for numeric metrics
         numeric_fields = ['final_rmse', 'final_mean_distance', 'final_median_distance', 
                          'final_max_distance', 'final_min_distance', 'final_std_deviation',
                          'total_time', 'computation_time', 'correspondence_accuracy_rate']
@@ -270,8 +295,12 @@ class ICPAnalyzer:
         
         return avg_result
     
+    # =========================================================================
+    # OUTPUT GENERATION METHODS
+    # =========================================================================
+    
     def save_results(self, results):
-        """Save results to CSV file"""
+        """Save raw results to timestamped CSV file"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         csv_file = self.results_dir / f"icp_analysis_results_{timestamp}.csv"
         
@@ -284,69 +313,69 @@ class ICPAnalyzer:
         print(f"Results saved to: {csv_file}")
     
     def generate_visualizations(self, results):
-        """Generate comprehensive visualizations"""
+        """Generate comprehensive visualization suite showing ICP performance comparisons"""
         if not results:
             print("No results to visualize")
             return
         
-        # Set up the plotting style
+        # Set up professional plotting style
         plt.style.use('seaborn-v0_8')
         
-        # Create figure with subplots
+        # =====================================================================
+        # VISUALIZATION SET 1: Core Performance Metrics
+        # =====================================================================
         fig, axes = plt.subplots(1, 2, figsize=(18, 8))
         fig.suptitle('ICP Performance Analysis', fontsize=16, fontweight='bold')
         
-        # 1. Accuracy comparison (RMSE)
-        self.plot_accuracy_comparison(axes[0], results)
+        self.plot_accuracy_comparison(axes[0], results)  # RMSE comparison
+        self.plot_speed_comparison(axes[1], results)     # Computation time comparison
         
-        # 2. Speed comparison (computation time)
-        self.plot_speed_comparison(axes[1], results)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         plot_file = self.results_dir / f"icp_analysis_plots_{timestamp}_1.png"
         plt.savefig(plot_file, dpi=300, bbox_inches='tight')
         
-        #reset
+        # =====================================================================
+        # VISUALIZATION SET 2: Advanced Analysis
+        # =====================================================================
         fig, axes = plt.subplots(1, 2, figsize=(18, 8))
         fig.suptitle('ICP Performance Analysis', fontsize=16, fontweight='bold')
         
-        # 3. Correspondence accuracy rate
-        self.plot_correspondence_accuracy(axes[0], results)
-        
-        
-        
-        # 4. Accuracy vs Speed trade-off
-        self.plot_accuracy_vs_speed(axes[1], results)
+        self.plot_correspondence_accuracy(axes[0], results)  # Point correspondence success rate
+        self.plot_accuracy_vs_speed(axes[1], results)        # Trade-off analysis
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         plot_file = self.results_dir / f"icp_analysis_plots_{timestamp}_2.png"
         plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-         #reset
+        
+        # =====================================================================
+        # VISUALIZATION SET 3: Specialized Comparisons
+        # =====================================================================
         fig, axes = plt.subplots(1, 2, figsize=(18, 8))
         fig.suptitle('ICP Performance Analysis', fontsize=16, fontweight='bold')
         
-        # 5. Downsampling impact (for LinearICP)
-        self.plot_downsampling_impact(axes[0], results)
-        
-    # 6. Colored vs Non-colored comparison
-        self.plot_colored_comparison(axes[1], results)
+        self.plot_downsampling_impact(axes[0], results)  # Effect of point cloud downsampling
+        self.plot_colored_comparison(axes[1], results)   # Colored vs traditional ICP
         
         plt.tight_layout()
         
-        # Save the plot
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         plot_file = self.results_dir / f"icp_analysis_plots_{timestamp}_3.png"
         plt.savefig(plot_file, dpi=300, bbox_inches='tight')
         print(f"Plots saved to: {plot_file}")
         
-        # Generate summary table
+        # Generate textual summary
         self.generate_summary_table(results)
     
+    # =========================================================================
+    # INDIVIDUAL PLOTTING METHODS
+    # =========================================================================
+    
     def plot_accuracy_comparison(self, ax, results):
-        """Plot RMSE comparison across different ICP methods"""
+        """Create bar chart comparing final RMSE across all ICP configurations"""
         configs = [r['config_name'] for r in results]
         rmses = [r.get('final_rmse', 0) for r in results]
 
-        # Filter valid data
+        # Filter out invalid data points
         valid_data = [(c, r) for c, r in zip(configs, rmses) if r is not None and not np.isnan(r) and r > 0]
         if not valid_data:
             ax.text(0.5, 0.5, 'No valid RMSE data available', ha='center', va='center', transform=ax.transAxes)
@@ -354,12 +383,14 @@ class ICPAnalyzer:
             return
 
         valid_configs, valid_rmses = zip(*valid_data)
+        
+        # Use distinct colors for better visual separation
         distinct_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
                        '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
                        '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
                        '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080']
 
-        colors = distinct_colors[:len(valid_configs)]  # pick as many as needed
+        colors = distinct_colors[:len(valid_configs)]
 
         bars = ax.bar(range(len(valid_configs)), valid_rmses, alpha=0.7, color=colors)
         ax.set_title('Final RMSE Comparison')
@@ -368,13 +399,13 @@ class ICPAnalyzer:
         ax.set_xticks(range(len(valid_configs)))
         ax.set_xticklabels(valid_configs, rotation=45, ha='right')
 
+        # Add value labels on bars
         for bar, rmse in zip(bars, valid_rmses):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001,
                     f'{rmse:.4f}', ha='center', va='bottom', fontsize=8)
 
-
     def plot_speed_comparison(self, ax, results):
-        """Plot computation time comparison"""
+        """Create bar chart comparing total computation time across configurations"""
         configs = [r['config_name'] for r in results]
         times = [r.get('total_time', 0) for r in results]
 
@@ -386,7 +417,7 @@ class ICPAnalyzer:
 
         valid_configs, valid_times = zip(*valid_data)
 
-        colors = plt.cm.Set2(np.linspace(0, 1, len(valid_configs)))  # Different colormap
+        colors = plt.cm.Set2(np.linspace(0, 1, len(valid_configs)))
         bars = ax.bar(range(len(valid_configs)), valid_times, alpha=0.7, color=colors)
         ax.set_title('Computation Time Comparison')
         ax.set_ylabel('Time (seconds)')
@@ -394,21 +425,22 @@ class ICPAnalyzer:
         ax.set_xticks(range(len(valid_configs)))
         ax.set_xticklabels(valid_configs, rotation=45, ha='right')
 
+        # Add time labels on bars
         for bar, time_val in zip(bars, valid_times):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
                     f'{time_val:.2f}s', ha='center', va='bottom', fontsize=8)
 
-
     def plot_correspondence_accuracy(self, ax, results):
-        """Plot correspondence accuracy rate"""
+        """Plot percentage of successful point correspondences found by each ICP variant"""
         configs = [r['config_name'] for r in results]
         accuracies = [r.get('correspondence_accuracy_rate', 0) for r in results]
+        
         distinct_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
                        '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
                        '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
                        '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080']
 
-        colors = distinct_colors[:len(configs)]  # pick as many as needed
+        colors = distinct_colors[:len(configs)]
         bars = ax.bar(range(len(configs)), accuracies, alpha=0.7, color=colors)
         ax.set_title('Correspondence Accuracy Rate')
         ax.set_ylabel('Accuracy Rate')
@@ -416,41 +448,43 @@ class ICPAnalyzer:
         ax.set_xticks(range(len(configs)))
         ax.set_xticklabels(configs, rotation=45, ha='right')
 
+        # Add percentage labels
         for bar, acc in zip(bars, accuracies):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
                     f'{acc:.2%}', ha='center', va='bottom', fontsize=8)
 
-
     def plot_accuracy_vs_speed(self, ax, results):
-        """Plot accuracy vs speed trade-off"""
+        """Scatter plot showing the trade-off between accuracy (RMSE) and speed"""
         rmses = [r.get('final_rmse', 0) for r in results]
         times = [r.get('total_time', 0) for r in results]
         configs = [r['config_name'] for r in results]
+        
         distinct_colors = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
                        '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
                        '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
                        '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080']
 
-        colors = distinct_colors[:len(configs)]  # pick as many as needed
+        colors = distinct_colors[:len(configs)]
         scatter = ax.scatter(times, rmses, alpha=0.7, s=100, c=colors)
         ax.set_title('Accuracy vs Speed Trade-off')
         ax.set_xlabel('Computation Time (seconds)')
         ax.set_ylabel('RMSE')
 
+        # Add selective labels to avoid clutter
         for i, config in enumerate(configs):
-            if i % 3 == 0:  # Label every 3rd point to avoid clutter
+            if i % 3 == 0:  # Label every 3rd point
                 ax.annotate(config, (times[i], rmses[i]),
                             xytext=(5, 5), textcoords='offset points', fontsize=8)
 
-
     def plot_downsampling_impact(self, ax, results):
-        """Plot impact of downsampling on LinearICP"""
+        """Analyze how point cloud downsampling affects LinearICP performance"""
         linear_results = [r for r in results if 'LinearICP' in r['config_name']]
 
         if not linear_results:
             ax.text(0.5, 0.5, 'No LinearICP results', ha='center', va='center', transform=ax.transAxes)
             return
 
+        # Group by downsampling level
         low_results = [r for r in linear_results if 'Low' in r['config_name']]
         medium_results = [r for r in linear_results if 'Medium' in r['config_name']]
         high_results = [r for r in linear_results if 'High' in r['config_name']]
@@ -461,9 +495,8 @@ class ICPAnalyzer:
             np.mean([r.get('final_rmse', 0) for r in medium_results]) if medium_results else 0,
             np.mean([r.get('final_rmse', 0) for r in high_results]) if high_results else 0
         ]
-        
 
-        colors = ['#1f77b4', '#ff7f0e', '#d62728']  # Blue, orange, red
+        colors = ['#1f77b4', '#ff7f0e', '#d62728']  # Blue, orange, red progression
         bars = ax.bar(categories, rmses, alpha=0.7, color=colors)
         ax.set_title('LinearICP: Downsampling Impact on Accuracy')
         ax.set_ylabel('RMSE')
@@ -473,9 +506,8 @@ class ICPAnalyzer:
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001,
                     f'{rmse:.4f}', ha='center', va='bottom')
 
-
     def plot_colored_comparison(self, ax, results):
-        """Plot colored vs non-colored ICP comparison"""
+        """Compare performance between color-aware and traditional ICP methods"""
         colored_results = [r for r in results if 'Colored' in r['config_name']]
         non_colored_results = [r for r in results if 'Colored' not in r['config_name']]
 
@@ -483,6 +515,7 @@ class ICPAnalyzer:
             ax.text(0.5, 0.5, 'Insufficient data for comparison', ha='center', va='center', transform=ax.transAxes)
             return
 
+        # Calculate averages for each group
         colored_rmse = np.mean([r.get('final_rmse', 0) for r in colored_results])
         non_colored_rmse = np.mean([r.get('final_rmse', 0) for r in non_colored_results])
 
@@ -493,6 +526,7 @@ class ICPAnalyzer:
         rmses = [non_colored_rmse, colored_rmse]
         times = [non_colored_time, colored_time]
 
+        # Create dual-axis bar chart
         x = np.arange(len(categories))
         width = 0.35
 
@@ -511,7 +545,7 @@ class ICPAnalyzer:
         ax2.legend(loc='upper right')
     
     def generate_summary_table(self, results):
-        """Generate a summary table of results"""
+        """Generate comprehensive text-based summary of all results"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         table_file = self.results_dir / f"icp_summary_table_{timestamp}.txt"
         
@@ -519,7 +553,7 @@ class ICPAnalyzer:
             f.write("ICP Performance Analysis Summary\n")
             f.write("=" * 50 + "\n\n")
             
-            # Sort results by RMSE (best to worst)
+            # Rank all configurations by accuracy (RMSE)
             sorted_results = sorted(results, key=lambda x: x.get('final_rmse', float('inf')))
             
             f.write("Ranking by Final RMSE (Best to Worst):\n")
@@ -536,7 +570,7 @@ class ICPAnalyzer:
             f.write("Best Performance by Category:\n")
             f.write("-" * 30 + "\n")
             
-            # Find best in each category
+            # Find best performer in each ICP family
             categories = {
                 'LinearICP': [r for r in results if 'LinearICP' in r['config_name']],
                 'LMICP': [r for r in results if 'LMICP' in r['config_name']],
@@ -550,7 +584,12 @@ class ICPAnalyzer:
         
         print(f"Summary table saved to: {table_file}")
 
+# =============================================================================
+# COMMAND LINE INTERFACE
+# =============================================================================
+
 def main():
+    """Main entry point with command line argument parsing"""
     parser = argparse.ArgumentParser(description='ICP Performance Analysis')
     parser.add_argument('--build-dir', default='src/build', help='Build directory path')
     parser.add_argument('--results-dir', default='analysis_results', help='Results directory path')
@@ -559,7 +598,7 @@ def main():
     
     args = parser.parse_args()
     
-    # Create analyzer and run analysis
+    # Initialize and run the complete analysis pipeline
     analyzer = ICPAnalyzer(args.build_dir, args.results_dir)
     analyzer.num_runs = args.runs
     analyzer.max_iterations = args.iterations

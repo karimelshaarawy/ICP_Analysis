@@ -174,15 +174,15 @@ int reconstructRoom() {
 	#if USE_HIERARCHICAL_ICP
     std::cout << "Using Hierarchical ICP Optimizer" << std::endl;
     optimizer = new HierarchicalICPOptimizer();
-#elif USE_SYMMETRIC_ICP
-    std::cout << "Using Symmetric ICP Optimizer" << std::endl;
-    optimizer = new AlternatingSymmetricICPOptimizer();
-#elif USE_LINEAR_ICP
-    std::cout << "Using Linear ICP Optimizer" << std::endl;
-    optimizer = new LinearICPOptimizer();
-#elif USE_LM_ICP
-    std::cout << "Using Levenberg-Marquardt ICP Optimizer" << std::endl;
-    optimizer = new LevenbergMarquardtICPOptimizer();
+	#elif USE_SYMMETRIC_ICP
+		std::cout << "Using Symmetric ICP Optimizer" << std::endl;
+		optimizer = new AlternatingSymmetricICPOptimizer();
+	#elif USE_LINEAR_ICP
+		std::cout << "Using Linear ICP Optimizer" << std::endl;
+		optimizer = new LinearICPOptimizer();
+	#elif USE_LM_ICP
+		std::cout << "Using Levenberg-Marquardt ICP Optimizer" << std::endl;
+		optimizer = new LevenbergMarquardtICPOptimizer();
     // Configure LM-specific parameters if needed (uncomment and adjust)
     // LevenbergMarquardtICPOptimizer* lmOptimizer = static_cast<LevenbergMarquardtICPOptimizer*>(optimizer);
     // lmOptimizer->setNbOfIterations(5); // Fewer iterations per ICP step

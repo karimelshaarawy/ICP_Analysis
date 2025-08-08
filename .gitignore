@@ -125,8 +125,10 @@ vendor/
 # Virtual environments
 venv/
 env/
+icpvenv/
 .venv/
 .env/
+
 
 # Environment files
 .env

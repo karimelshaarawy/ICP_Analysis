@@ -3,42 +3,54 @@
 // The Google logging library (GLOG), used in Ceres, has a conflict with Windows defined constants. This definitions prevents GLOG to use the same constants
 #define GLOG_NO_ABBREVIATED_SEVERITIES
 
-#include <ceres/ceres.h>
-#include <ceres/rotation.h>
-#include <flann/flann.hpp>
+// ===== EXTERNAL DEPENDENCIES =====
+#include <ceres/ceres.h>        // Non-linear optimization library
+#include <ceres/rotation.h>     // Rotation utilities for Ceres
+#include <flann/flann.hpp>      // Fast nearest neighbor search library
 
+// ===== PROJECT DEPENDENCIES =====
 #include "SimpleMesh.h"
 #include "NearestNeighbor.h"
 #include "PointCloud.h"
 #include "ProcrustesAligner.h"
 
+// ===== STANDARD LIBRARY INCLUDES =====
 #include <iostream>
 #include <vector>
-#include <Eigen/Dense>
-#include <omp.h> // For OpenMP
+#include <Eigen/Dense>          // Linear algebra library
+#include <omp.h>                // OpenMP for parallelization
 #include <fstream>
 #include <sstream>
-#include <chrono>
+#include <chrono>               // Time measurement
 #include <iomanip>
-#include <cmath> // For sqrt, pow, etc.
-#include <algorithm> // For std::sort
-#include <numeric> // For std::accumulate
+#include <cmath>                // Mathematical functions
+#include <algorithm>            // STL algorithms
+#include <numeric>              // Numerical algorithms
 
-
-// Type definitions for 6D pose representation
+// ===== TYPE DEFINITIONS =====
+// Custom types for 6D pose representation (3D rotation + 3D translation)
 typedef Eigen::Matrix<float, 6, 1> Vector6f;
 typedef Eigen::Matrix<float, 3, 6> Matrix3x6f;
 typedef Eigen::Matrix<float, 6, 6> Matrix6f;
 
+// Standard Eigen types for convenience
 using Vector3d = Eigen::Vector3d;
 using Matrix4d = Eigen::Matrix4d;
 using Matrix3d = Eigen::Matrix3d;
 
+// =====================================================================
+// METRICS AND EVALUATION SYSTEM
+// =====================================================================
+
 /**
- * Metrics class for evaluating ICP performance
+ * ICPMetrics: Comprehensive evaluation system for ICP performance
+ * - Calculates statistical metrics (mean, median, RMSE, etc.)
+ * - Logs performance data to CSV files
+ * - Compares estimated poses against ground truth
  */
 class ICPMetrics {
 public:
+    // Structure to hold all computed metrics for one ICP iteration
     struct MetricsData {
         double meanDistance;
         double medianDistance;
@@ -54,16 +66,19 @@ public:
         std::string constraintType;
     };
 
+    // Constructor: Initialize logging system
     ICPMetrics() : m_logFile("icp_metrics.log") {
         initializeLogFile();
     }
 
+    // Destructor: Clean up file handles
     ~ICPMetrics() {
         if (m_logFile.is_open()) {
             m_logFile.close();
         }
     }
 
+    // Calculate comprehensive metrics by comparing estimated vs ground truth poses
     MetricsData calculateMetrics(const std::vector<Vector3f>& sourcePoints,
                                const std::vector<Vector3f>& targetPoints,
                                const std::vector<Match>& matches,
@@ -85,10 +100,8 @@ public:
         std::vector<double> distances;
         distances.reserve(sourcePoints.size());
 
-        // Transform source points with estimated pose
+        // Transform source points with both estimated and ground truth poses
         auto transformedSourcePoints = transformPoints(sourcePoints, estimatedPose);
-        
-        // Transform source points with ground truth pose
         auto groundTruthTransformedPoints = transformPoints(sourcePoints, groundTruthPose);
 
         // Calculate distances for valid correspondences
@@ -105,8 +118,9 @@ public:
             }
         }
 
+        // Compute statistical measures
         if (distances.empty()) {
-            // No valid correspondences
+            // No valid correspondences - set all metrics to zero
             metrics.meanDistance = 0.0;
             metrics.medianDistance = 0.0;
             metrics.maxDistance = 0.0;
@@ -114,7 +128,7 @@ public:
             metrics.stdDeviation = 0.0;
             metrics.rmse = 0.0;
         } else {
-            // Calculate statistics
+            // Calculate comprehensive statistics
             std::sort(distances.begin(), distances.end());
             
             metrics.meanDistance = std::accumulate(distances.begin(), distances.end(), 0.0) / distances.size();
@@ -129,7 +143,7 @@ public:
             }
             metrics.stdDeviation = std::sqrt(variance / distances.size());
             
-            // Calculate RMSE
+            // Calculate RMSE (Root Mean Square Error)
             double sumSquaredErrors = 0.0;
             for (double dist : distances) {
                 sumSquaredErrors += dist * dist;
@@ -140,6 +154,7 @@ public:
         return metrics;
     }
 
+    // Log metrics to CSV file with timestamp
     void logMetrics(const MetricsData& metrics) {
         auto now = std::chrono::system_clock::now();
         auto time_t = std::chrono::system_clock::to_time_t(now);
@@ -163,6 +178,7 @@ public:
         m_logFile.flush(); // Ensure immediate writing to file
     }
 
+    // Print metrics to console for real-time monitoring
     void printMetrics(const MetricsData& metrics) {
         std::cout << "=== ICP Metrics (Iteration " << metrics.iteration << ") ===" << std::endl;
         std::cout << "Optimizer: " << metrics.optimizerType << std::endl;
@@ -182,6 +198,7 @@ public:
 private:
     std::ofstream m_logFile;
 
+    // Initialize CSV log file with headers
     void initializeLogFile() {
         m_logFile.open("icp_metrics.log", std::ios::app);
         if (m_logFile.tellp() == 0) {
@@ -191,6 +208,7 @@ private:
         }
     }
 
+    // Transform point cloud using 4x4 transformation matrix
     std::vector<Vector3f> transformPoints(const std::vector<Vector3f>& points, const Matrix4f& pose) {
         std::vector<Vector3f> transformedPoints;
         transformedPoints.reserve(points.size());
@@ -206,8 +224,12 @@ private:
     }
 };
 
+// =====================================================================
+// HELPER UTILITIES FOR CERES OPTIMIZATION
+// =====================================================================
+
 /**
- * Helper methods for writing Ceres cost functions.
+ * fillVector: Convert Eigen Vector3f to Ceres-compatible array format
  */
 template <typename T>
 static inline void fillVector(const Vector3f& input, T* output) {
@@ -216,40 +238,40 @@ static inline void fillVector(const Vector3f& input, T* output) {
     output[2] = T(input[2]);
 }
 
-
 /**
- * Pose increment is only an interface to the underlying array (in constructor, no copy
- * of the input array is made).
- * Important: Input array needs to have a size of at least 6.
+ * PoseIncrement: Wrapper class for 6-DOF pose parameters in SE(3)
+ * - Handles angle-axis rotation (3 params) + translation (3 params)
+ * - Provides utilities for applying transformations
+ * - Interface between raw arrays and geometric operations
  */
 template <typename T>
 class PoseIncrement {
 public:
+    // Constructor: Wrap existing array (no copy made)
     explicit PoseIncrement(T* const array) : m_array{ array } { }
 
+    // Initialize all parameters to zero
     void setZero() {
         for (int i = 0; i < 6; ++i)
             m_array[i] = T(0);
     }
 
+    // Get raw data pointer for Ceres
     T* getData() const {
         return m_array;
     }
 
-        void getNormal(const T* normal, T* rotatedNormal) const {
-    ceres::AngleAxisRotatePoint(m_array, normal, rotatedNormal);
+    // Apply rotation to a normal vector
+    void getNormal(const T* normal, T* rotatedNormal) const {
+        ceres::AngleAxisRotatePoint(m_array, normal, rotatedNormal);
     }
 
-
-
     /**
-     * Applies the pose increment onto the input point and produces transformed output point.
-     * Important: The memory for both 3D points (input and output) needs to be reserved (i.e. on the stack)
-     * beforehand).
+     * Apply pose transformation: R*p + t
+     * - First 3 elements: angle-axis rotation
+     * - Last 3 elements: translation
      */
     void apply(T* inputPoint, T* outputPoint) const {
-        // pose[0,1,2] is angle-axis rotation.
-        // pose[3,4,5] is translation.
         const T* rotation = m_array;
         const T* translation = m_array + 3;
 
@@ -260,43 +282,42 @@ public:
         outputPoint[1] = temp[1] + translation[1];
         outputPoint[2] = temp[2] + translation[2];
     }
-    void applyInverse(T* inputPoint, T* outputPoint) const {
-    // pose[0,1,2] is angle-axis rotation.
-    // pose[3,4,5] is translation.
-    const T* rotation = m_array;
-    const T* translation = m_array + 3;
-
-    // First, subtract the translation
-    T temp[3];
-    temp[0] = inputPoint[0] - translation[0];
-    temp[1] = inputPoint[1] - translation[1];
-    temp[2] = inputPoint[2] - translation[2];
-
-    // Then apply the inverse rotation (negative angle-axis)
-    T inverse_rotation[3];
-    inverse_rotation[0] = -rotation[0];
-    inverse_rotation[1] = -rotation[1];
-    inverse_rotation[2] = -rotation[2];
-
-    ceres::AngleAxisRotatePoint(inverse_rotation, temp, outputPoint);
-}
 
     /**
-     * Converts the pose increment with rotation in SO3 notation and translation as 3D vector into
-     * transformation 4x4 matrix.
+     * Apply inverse transformation: R^T*(p - t)
+     */
+    void applyInverse(T* inputPoint, T* outputPoint) const {
+        const T* rotation = m_array;
+        const T* translation = m_array + 3;
+
+        // First, subtract the translation
+        T temp[3];
+        temp[0] = inputPoint[0] - translation[0];
+        temp[1] = inputPoint[1] - translation[1];
+        temp[2] = inputPoint[2] - translation[2];
+
+        // Then apply the inverse rotation (negative angle-axis)
+        T inverse_rotation[3];
+        inverse_rotation[0] = -rotation[0];
+        inverse_rotation[1] = -rotation[1];
+        inverse_rotation[2] = -rotation[2];
+
+        ceres::AngleAxisRotatePoint(inverse_rotation, temp, outputPoint);
+    }
+
+    /**
+     * Convert pose increment to 4x4 transformation matrix
      */
     static Matrix4f convertToMatrix(const PoseIncrement<double>& poseIncrement) {
-        // pose[0,1,2] is angle-axis rotation.
-        // pose[3,4,5] is translation.
         double* pose = poseIncrement.getData();
         double* rotation = pose;
         double* translation = pose + 3;
 
-        // Convert the rotation from SO3 to matrix notation (with column-major storage).
+        // Convert angle-axis to rotation matrix
         double rotationMatrix[9];
         ceres::AngleAxisToRotationMatrix(rotation, rotationMatrix);
 
-        // Create the 4x4 transformation matrix.
+        // Build 4x4 transformation matrix
         Matrix4f matrix;
         matrix.setIdentity();
         matrix(0, 0) = float(rotationMatrix[0]);	matrix(0, 1) = float(rotationMatrix[3]);	matrix(0, 2) = float(rotationMatrix[6]);	matrix(0, 3) = float(translation[0]);
@@ -307,11 +328,17 @@ public:
     }
 
 private:
-    T* m_array;
+    T* m_array; // Pointer to 6-element array [rx, ry, rz, tx, ty, tz]
 };
 
+// =====================================================================
+// CERES COST FUNCTIONS (CONSTRAINT TYPES)
+// =====================================================================
+
 /**
- * Optimization constraints.
+ * PointToPointConstraint: Basic geometric constraint
+ * - Minimizes Euclidean distance between corresponding points
+ * - Creates 3D residual vector: (R*source + t) - target
  */
 class PointToPointConstraint {
 public:
@@ -323,20 +350,15 @@ public:
 
     template<typename T>
     bool operator()(const T* const pose, T* residuals) const {
-        // Implemented the point-to-point cost function.
-        // The resulting 3D residual should be stored in residuals array. To apply the pose
-        // increment (pose parameters) to the source point, you can use the PoseIncrement
-        // class.
-        // Important: Ceres automatically squares the cost function.
+        // Transform source point using pose parameters
         T sourcePoint[3];
         fillVector(m_sourcePoint, sourcePoint);
 
-        PoseIncrement<T> poseIncrement =PoseIncrement<T>(const_cast< T* const>(pose));
+        PoseIncrement<T> poseIncrement = PoseIncrement<T>(const_cast<T* const>(pose));
         T sourcePointTransformed[3];
         poseIncrement.apply(sourcePoint, sourcePointTransformed);
 
-        // Calculate the residual: (R*s + t) - d
-        // Where R*s + t is sourcePointTransformed, d is m_targetPoint
+        // Calculate weighted residual: (R*s + t) - d
         residuals[0] = T(m_weight) * (sourcePointTransformed[0] - T(m_targetPoint[0]));
         residuals[1] = T(m_weight) * (sourcePointTransformed[1] - T(m_targetPoint[1]));
         residuals[2] = T(m_weight) * (sourcePointTransformed[2] - T(m_targetPoint[2]));
@@ -344,6 +366,7 @@ public:
         return true;
     }
 
+    // Factory method for Ceres cost function
     static ceres::CostFunction* create(const Vector3f& sourcePoint, const Vector3f& targetPoint, const float weight) {
         return new ceres::AutoDiffCostFunction<PointToPointConstraint, 3, 6>(
             new PointToPointConstraint(sourcePoint, targetPoint, weight)
@@ -356,6 +379,11 @@ protected:
     const float m_weight;
 };
 
+/**
+ * ColoredPointToPointConstraint: Enhanced constraint with color information
+ * - Combines geometric and photometric constraints
+ * - Creates 6D residual: [geometric_residual (3D), color_residual (3D)]
+ */
 class ColoredPointToPointConstraint {
 public:
     ColoredPointToPointConstraint(const Vector3f& sourcePoint, const Vector3f& targetPoint, 
@@ -378,12 +406,12 @@ public:
         T sourcePointTransformed[3];
         poseIncrement.apply(sourcePoint, sourcePointTransformed);
 
-        // Geometric residual: (R*s + t) - d
+        // Geometric residual: standard point-to-point
         residuals[0] = T(m_weight) * (sourcePointTransformed[0] - T(m_targetPoint[0]));
         residuals[1] = T(m_weight) * (sourcePointTransformed[1] - T(m_targetPoint[1]));
         residuals[2] = T(m_weight) * (sourcePointTransformed[2] - T(m_targetPoint[2]));
 
-        // Color residual: color difference
+        // Color residual: penalize color differences
         residuals[3] = T(m_colorWeight) * (T(m_sourceColor[0]) - T(m_targetColor[0]));
         residuals[4] = T(m_colorWeight) * (T(m_sourceColor[1]) - T(m_targetColor[1]));
         residuals[5] = T(m_colorWeight) * (T(m_sourceColor[2]) - T(m_targetColor[2]));
@@ -408,6 +436,12 @@ protected:
     const float m_colorWeight;
 };
 
+/**
+ * PointToPlaneConstraint: Surface-aware constraint
+ * - Minimizes distance from point to plane (defined by point + normal)
+ * - More robust to noise and better convergence than point-to-point
+ * - Creates 1D residual: (R*source + t - target) · normal
+ */
 class PointToPlaneConstraint {
 public:
     PointToPlaneConstraint(const Vector3f& sourcePoint, const Vector3f& targetPoint, const Vector3f& targetNormal, const float weight) :
@@ -418,37 +452,37 @@ public:
     { }
 
     template <typename T>
-bool operator()(const T* const pose_increment, T* residuals) const {
-    // Convert source point to T
-    T source_point_T[3] = {
-        T(m_sourcePoint[0]),
-        T(m_sourcePoint[1]),
-        T(m_sourcePoint[2])
-    };
+    bool operator()(const T* const pose_increment, T* residuals) const {
+        // Convert source point to T precision
+        T source_point_T[3] = {
+            T(m_sourcePoint[0]),
+            T(m_sourcePoint[1]),
+            T(m_sourcePoint[2])
+        };
 
-    // Apply rotation using AngleAxis and then add translation
-    T transformed_point_T[3];
-    ceres::AngleAxisRotatePoint(pose_increment, source_point_T, transformed_point_T);
-    transformed_point_T[0] += pose_increment[3];
-    transformed_point_T[1] += pose_increment[4];
-    transformed_point_T[2] += pose_increment[5];
+        // Apply transformation: R*p + t
+        T transformed_point_T[3];
+        ceres::AngleAxisRotatePoint(pose_increment, source_point_T, transformed_point_T);
+        transformed_point_T[0] += pose_increment[3];
+        transformed_point_T[1] += pose_increment[4];
+        transformed_point_T[2] += pose_increment[5];
 
-    // Compute the difference vector between transformed source and target
-    T diff[3] = {
-        transformed_point_T[0] - T(m_targetPoint[0]),
-        transformed_point_T[1] - T(m_targetPoint[1]),
-        transformed_point_T[2] - T(m_targetPoint[2])
-    };
+        // Compute point-to-plane distance: (transformed_point - target_point) · normal
+        T diff[3] = {
+            transformed_point_T[0] - T(m_targetPoint[0]),
+            transformed_point_T[1] - T(m_targetPoint[1]),
+            transformed_point_T[2] - T(m_targetPoint[2])
+        };
 
-    // Compute dot product with normal, scaled by weight
-    residuals[0] = T(m_weight) * (
-        T(m_targetNormal[0]) * diff[0] +
-        T(m_targetNormal[1]) * diff[1] +
-        T(m_targetNormal[2]) * diff[2]
-    );
+        // Single scalar residual: dot product with normal
+        residuals[0] = T(m_weight) * (
+            T(m_targetNormal[0]) * diff[0] +
+            T(m_targetNormal[1]) * diff[1] +
+            T(m_targetNormal[2]) * diff[2]
+        );
 
-    return true;
-}
+        return true;
+    }
 
     static ceres::CostFunction* create(const Vector3f& sourcePoint, const Vector3f& targetPoint, const Vector3f& targetNormal, const float weight) {
         return new ceres::AutoDiffCostFunction<PointToPlaneConstraint, 1, 6>(
@@ -457,23 +491,28 @@ bool operator()(const T* const pose_increment, T* residuals) const {
     }
 
 protected:
+    // Helper for applying 4x4 transformation matrices (currently unused)
+    template <typename T>
+    void applyPoseTransformation(const T* pose_matrix, const T* point, T* result) const {
+        result[0] = pose_matrix[0] * point[0] + pose_matrix[1] * point[1] + 
+                   pose_matrix[2] * point[2] + pose_matrix[3];
+        result[1] = pose_matrix[4] * point[0] + pose_matrix[5] * point[1] + 
+                   pose_matrix[6] * point[2] + pose_matrix[7];
+        result[2] = pose_matrix[8] * point[0] + pose_matrix[9] * point[1] + 
+                   pose_matrix[10] * point[2] + pose_matrix[11];
+    }
 
-template <typename T>
-void applyPoseTransformation(const T* pose_matrix, const T* point, T* result) const {
-    // Apply 4x4 transformation matrix to 3D point
-    result[0] = pose_matrix[0] * point[0] + pose_matrix[1] * point[1] + 
-               pose_matrix[2] * point[2] + pose_matrix[3];
-    result[1] = pose_matrix[4] * point[0] + pose_matrix[5] * point[1] + 
-               pose_matrix[6] * point[2] + pose_matrix[7];
-    result[2] = pose_matrix[8] * point[0] + pose_matrix[9] * point[1] + 
-               pose_matrix[10] * point[2] + pose_matrix[11];
-}
     const Vector3f m_sourcePoint;
     const Vector3f m_targetPoint;
     const Vector3f m_targetNormal;
     const float m_weight;
 };
 
+/**
+ * ColoredPointToPlaneConstraint: Surface + color constraint
+ * - Combines point-to-plane geometric constraint with color matching
+ * - Creates 4D residual: [point_to_plane (1D), color_difference (3D)]
+ */
 class ColoredPointToPlaneConstraint {
 public:
     ColoredPointToPlaneConstraint(const Vector3f& sourcePoint, const Vector3f& targetPoint, 
@@ -503,7 +542,7 @@ public:
             (sourcePointTransformed[2] - T(m_targetPoint[2])) * T(m_targetNormal[2])
         );
 
-        // Color residual: color difference
+        // Color residual: RGB color difference
         residuals[1] = T(m_colorWeight) * (T(m_sourceColor[0]) - T(m_targetColor[0]));
         residuals[2] = T(m_colorWeight) * (T(m_sourceColor[1]) - T(m_targetColor[1]));
         residuals[3] = T(m_colorWeight) * (T(m_sourceColor[2]) - T(m_targetColor[2]));
@@ -529,6 +568,12 @@ protected:
     const float m_colorWeight;
 };
 
+/**
+ * SymmetricPointToPlaneConstraint: Bidirectional constraint
+ * - Enforces consistency in both directions: source→target AND target→source
+ * - More robust to initialization and local minima
+ * - Creates 2D residual: [source_to_target_plane, target_to_source_plane]
+ */
 class SymmetricPointToPlaneConstraint {
 public:
     SymmetricPointToPlaneConstraint(const Vector3f& sourcePoint, const Vector3f& targetPoint, 
@@ -543,38 +588,30 @@ public:
 
     template <typename T>
     bool operator()(const T* const pose_increment, T* residuals) const {
-        // The pose_increment is a 6-element array:
-        // - First 3 elements are an angle-axis rotation vector.
-        // - Last 3 elements are a translation vector.
-        
         T source_point_T[3] = {T(m_sourcePoint.x()), T(m_sourcePoint.y()), T(m_sourcePoint.z())};
         T target_point_T[3] = {T(m_targetPoint.x()), T(m_targetPoint.y()), T(m_targetPoint.z())};
         
-        // Apply rotation to source point
+        // Forward transformation: source → target space
         T transformed_source_point_T[3];
         ceres::AngleAxisRotatePoint(pose_increment, source_point_T, transformed_source_point_T);
-        
-        // Apply translation to source point
         transformed_source_point_T[0] += pose_increment[3];
         transformed_source_point_T[1] += pose_increment[4];
         transformed_source_point_T[2] += pose_increment[5];
         
-        // Apply inverse rotation to target point
+        // Inverse transformation: target → source space
         T inverse_pose[3] = {-pose_increment[0], -pose_increment[1], -pose_increment[2]};
         T transformed_target_point_T[3];
         ceres::AngleAxisRotatePoint(inverse_pose, target_point_T, transformed_target_point_T);
-        
-        // Apply inverse translation to target point
         transformed_target_point_T[0] -= pose_increment[3];
         transformed_target_point_T[1] -= pose_increment[4];
         transformed_target_point_T[2] -= pose_increment[5];
         
-        // First constraint: transformed source point to target plane
+        // First constraint: transformed source to target plane
         T residual1 = (transformed_source_point_T[0] - T(m_targetPoint.x())) * T(m_targetNormal.x()) +
                       (transformed_source_point_T[1] - T(m_targetPoint.y())) * T(m_targetNormal.y()) +
                       (transformed_source_point_T[2] - T(m_targetPoint.z())) * T(m_targetNormal.z());
         
-        // Second constraint: inverse-transformed target point to source plane  
+        // Second constraint: inverse-transformed target to source plane  
         T residual2 = (transformed_target_point_T[0] - T(m_sourcePoint.x())) * T(m_sourceNormal.x()) +
                       (transformed_target_point_T[1] - T(m_sourcePoint.y())) * T(m_sourceNormal.y()) +
                       (transformed_target_point_T[2] - T(m_sourcePoint.z())) * T(m_sourceNormal.z());
@@ -601,20 +638,27 @@ protected:
     const float m_weight;
 };
 
-   
+// =====================================================================
+// ICP OPTIMIZER IMPLEMENTATIONS
+// =====================================================================
+
 /**
- * ICP optimizer - Abstract Base Class
+ * ICPOptimizer: Abstract base class for all ICP variants
+ * - Defines common interface and shared functionality
+ * - Handles nearest neighbor search and correspondence filtering
+ * - Provides metrics calculation and logging
  */
 class ICPOptimizer {
 public:
     ICPOptimizer() :
-        m_bUsePointToPlaneConstraints{ true },
-        m_bUseColoredICP{ false },
-        m_nIterations{ 20 },
+        m_bUsePointToPlaneConstraints{ true },   // Use surface-aware constraints by default
+        m_bUseColoredICP{ false },               // Disable color constraints by default
+        m_nIterations{ 20 },                     // Default iteration count
         m_nearestNeighborSearch{ std::make_unique<NearestNeighborSearchFlann>() },
         m_metrics{ std::make_unique<ICPMetrics>() }
     { }
 
+    // Configuration methods
     void setMatchingMaxDistance(float maxDistance) {
         m_nearestNeighborSearch->setMatchingMaxDistance(maxDistance);
     }
@@ -627,37 +671,39 @@ public:
         m_bUseColoredICP = bUseColoredICP;
     }
 
-
-
     void setNbOfIterations(unsigned nIterations) {
         m_nIterations = nIterations;
     }
 
+    // Nearest neighbor search setup
     void buildColoredIndex(const PointCloud& target) {
-        // Always use regular geometric nearest neighbor search
         m_nearestNeighborSearch->buildIndex(target.getPoints());
     }
 
     std::vector<Match> queryColoredMatches(const std::vector<Vector3f>& transformedPoints, const std::vector<Vector3f>& sourceColors) {
-        // Always use regular geometric nearest neighbor search
         return m_nearestNeighborSearch->queryMatches(transformedPoints);
     }
 
+    // Pure virtual method - must be implemented by derived classes
     virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose) = 0;
     
-    // Overloaded version with ground truth for metrics
+    // Overloaded version with ground truth for comprehensive evaluation
     virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose, 
                              const Matrix4f& groundTruthPose, const std::string& optimizerType = "Unknown") {
         estimatePose(source, target, initialPose);
     }
 
 protected:
-    bool m_bUsePointToPlaneConstraints;
-    bool m_bUseColoredICP;
-    unsigned m_nIterations;
+    // Configuration flags
+    bool m_bUsePointToPlaneConstraints;  // Point-to-plane vs point-to-point
+    bool m_bUseColoredICP;               // Include color information
+    unsigned m_nIterations;              // Maximum iteration count
+    
+    // Core components
     std::unique_ptr<NearestNeighborSearch> m_nearestNeighborSearch;
     std::unique_ptr<ICPMetrics> m_metrics;
 
+    // Utility methods for point cloud transformations
     std::vector<Vector3f> transformPoints(const std::vector<Vector3f>& sourcePoints, const Matrix4f& pose) {
         std::vector<Vector3f> transformedPoints;
         transformedPoints.reserve(sourcePoints.size());
@@ -672,6 +718,7 @@ protected:
         return transformedPoints;
     }
 
+    // Transform normals (inverse transpose of rotation matrix)
     std::vector<Vector3f> transformNormals(const std::vector<Vector3f>& sourceNormals, const Matrix4f& pose) {
         std::vector<Vector3f> transformedNormals;
         transformedNormals.reserve(sourceNormals.size());
@@ -685,10 +732,11 @@ protected:
         return transformedNormals;
     }
 
+    // Filter correspondences based on normal compatibility
     void pruneCorrespondences(const std::vector<Vector3f>& sourceNormals, const std::vector<Vector3f>& targetNormals, std::vector<Match>& matches) {
         const unsigned nPoints = sourceNormals.size();
-        const float maxNormalAngle = 60.0f * M_PI / 180.0f; // 60 degrees in radians
-        const float cosThreshold = std::cos(maxNormalAngle); // cos(60°) ≈ 0.5
+        const float maxNormalAngle = 60.0f * M_PI / 180.0f; // 60 degrees threshold
+        const float cosThreshold = std::cos(maxNormalAngle);
 
         for (unsigned i = 0; i < nPoints; i++) {
             Match& match = matches[i];
@@ -696,28 +744,25 @@ protected:
                 const auto& sourceNormal = sourceNormals[i];
                 const auto& targetNormal = targetNormals[match.idx];
 
-                // Check if normals are valid (not zero vectors)
+                // Check for valid normals
                 if (sourceNormal.norm() < 1e-6f || targetNormal.norm() < 1e-6f) {
-                    match.idx = -1; // Invalidate match for invalid normals
+                    match.idx = -1;
                     continue;
                 }
 
-                // Normalize normals to ensure reliable dot product
+                // Check normal compatibility
                 Vector3f normalizedSourceNormal = sourceNormal.normalized();
                 Vector3f normalizedTargetNormal = targetNormal.normalized();
-
-                // Calculate cosine of angle between normals
                 float cosAngle = normalizedSourceNormal.dot(normalizedTargetNormal);
 
-                // Invalidate match if angle between normals is greater than threshold
-                // cos(angle) < cos(60°) means angle > 60°
                 if (cosAngle < cosThreshold) {
-                    match.idx = -1;
+                    match.idx = -1; // Reject incompatible normals
                 }
             }
         }
     }
 
+    // Calculate and log comprehensive metrics
     void calculateAndLogMetrics(const std::vector<Vector3f>& sourcePoints,
                                const std::vector<Vector3f>& targetPoints,
                                const std::vector<Match>& matches,
@@ -737,9 +782,11 @@ protected:
     }
 };
 
-
 /**
- * ICP optimizer - using Ceres for optimization.
+ * CeresICPOptimizer: Non-linear optimization using Ceres Solver
+ * - Uses Levenberg-Marquardt algorithm for robust optimization
+ * - Supports all constraint types (point-to-point, point-to-plane, colored, symmetric)
+ * - Automatic differentiation for gradient computation
  */
 class CeresICPOptimizer : public ICPOptimizer {
 public:
@@ -751,55 +798,44 @@ public:
 
     virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose, 
                              const Matrix4f& groundTruthPose, const std::string& optimizerType) override {
-        // Load color data if colored ICP is enabled
+        // Setup for colored ICP if enabled
         if (m_bUseColoredICP) {
             m_sourceColors = source.getColors();
             m_targetColors = target.getColors();
         }
 
-        // Build the index of the FLANN tree (for fast nearest neighbor lookup).
         buildColoredIndex(target);
-
-        // The initial estimate can be given as an argument.
         Matrix4f estimatedPose = initialPose;
 
-        // We optimize on the transformation in SE3 notation: 3 parameters for the axis-angle vector of the rotation (its length presents
-        // the rotation angle) and 3 parameters for the translation vector. 
+        // 6-DOF pose increment: [angle_axis_x, angle_axis_y, angle_axis_z, tx, ty, tz]
         double incrementArray[6];
         auto poseIncrement = PoseIncrement<double>(incrementArray);
         poseIncrement.setZero();
 
+        // Main ICP iteration loop
         for (int i = 0; i < m_nIterations; ++i) {
-            // Compute the matches.
             std::cout << "Matching points ..." << std::endl;
             auto startTime = std::chrono::high_resolution_clock::now();
-            clock_t begin = clock();
 
+            // Find correspondences in current pose
             auto transformedPoints = transformPoints(source.getPoints(), estimatedPose);
             auto transformedNormals = transformNormals(source.getNormals(), estimatedPose);
-
             auto matches = m_nearestNeighborSearch->queryMatches(transformedPoints);
             pruneCorrespondences(transformedNormals, target.getNormals(), matches);
 
-            clock_t end = clock();
-            double elapsedSecs = double(end - begin) / CLOCKS_PER_SEC;
-            std::cout << "Completed in " << elapsedSecs << " seconds." << std::endl;
-
-            // Prepare point-to-point and point-to-plane constraints.
+            // Setup non-linear optimization problem
             ceres::Problem problem;
             prepareConstraints(transformedPoints, target.getPoints(), target.getNormals(), matches, poseIncrement, problem);
 
-            // Configure options for the solver.
+            // Configure and run Ceres solver
             ceres::Solver::Options options;
             configureSolver(options);
-
-            // Run the solver (for one iteration).
             ceres::Solver::Summary summary;
             ceres::Solve(options, &problem, &summary);
+            
             std::cout << summary.BriefReport() << std::endl;
-            //std::cout << summary.FullReport() << std::endl;
 
-            // Update the current pose estimate (we always update the pose from the left, using left-increment notation).
+            // Update pose estimate (left-multiplication for incremental updates)
             Matrix4f matrix = PoseIncrement<double>::convertToMatrix(poseIncrement);
             estimatedPose = PoseIncrement<double>::convertToMatrix(poseIncrement) * estimatedPose;
             poseIncrement.setZero();
@@ -807,33 +843,28 @@ public:
             auto endTime = std::chrono::high_resolution_clock::now();
             auto computationTime = std::chrono::duration<double>(endTime - startTime).count();
 
-            // Calculate and log metrics
             calculateAndLogMetrics(source.getPoints(), target.getPoints(), matches, 
                                  estimatedPose, groundTruthPose, i + 1, optimizerType, computationTime);
-
-            std::cout << "Optimization iteration done." << std::endl;
         }
 
-        // Store result
         initialPose = estimatedPose;
-    }
-
-
-private:
-    void configureSolver(ceres::Solver::Options& options) {
-        // Ceres options.
-        options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-        options.use_nonmonotonic_steps = false;
-        options.linear_solver_type = ceres::DENSE_QR;
-        options.minimizer_progress_to_stdout = 1;
-        options.max_num_iterations = 1;
-        options.num_threads = 8;
     }
 
 private:
     std::vector<Vector3f> m_sourceColors;
     std::vector<Vector3f> m_targetColors;
 
+    // Configure Ceres solver parameters
+    void configureSolver(ceres::Solver::Options& options) {
+        options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+        options.use_nonmonotonic_steps = false;
+        options.linear_solver_type = ceres::DENSE_QR;
+        options.minimizer_progress_to_stdout = 1;
+        options.max_num_iterations = 1;  // One iteration per ICP step
+        options.num_threads = 8;
+    }
+
+    // Add cost functions based on current configuration
     void prepareConstraints(const std::vector<Vector3f>& sourcePoints, const std::vector<Vector3f>& targetPoints, 
                           const std::vector<Vector3f>& targetNormals, const std::vector<Match> matches, 
                           const PoseIncrement<double>& poseIncrement, ceres::Problem& problem) const {
@@ -848,8 +879,9 @@ private:
                 if (!sourcePoint.allFinite() || !targetPoint.allFinite())
                     continue;
 
+                // Choose constraint type based on configuration
                 if (m_bUseColoredICP) {
-                    // Use colored ICP constraints
+                    // Add colored constraints if color data is available
                     const auto& sourceColors = m_sourceColors;
                     const auto& targetColors = m_targetColors;
                     
@@ -859,8 +891,7 @@ private:
                         
                         if (m_bUsePointToPlaneConstraints) {
                             const auto& targetNormal = targetNormals[match.idx];
-                            if (!targetNormal.allFinite())
-                                continue;
+                            if (!targetNormal.allFinite()) continue;
                                 
                             ceres::CostFunction* coloredPointToPlaneCost = 
                                 ColoredPointToPlaneConstraint::create(sourcePoint, targetPoint, targetNormal, 
@@ -872,26 +903,12 @@ private:
                                                                    sourceColor, targetColor, 1.0f, 0.1f);
                             problem.AddResidualBlock(coloredPointToPointCost, nullptr, poseIncrement.getData());
                         }
-                    } else {
-                        // Fallback to regular constraints if color data is not available
-                        if (m_bUsePointToPlaneConstraints) {
-                            const auto& targetNormal = targetNormals[match.idx];
-                            if (!targetNormal.allFinite())
-                                continue;
-                                
-                            ceres::CostFunction* pointToPlaneCost = PointToPlaneConstraint::create(sourcePoint, targetPoint, targetNormal, 1.0f);
-                            problem.AddResidualBlock(pointToPlaneCost, nullptr, poseIncrement.getData());
-                        } else {
-                            ceres::CostFunction* pointToPointCost = PointToPointConstraint::create(sourcePoint, targetPoint, 1.0f);
-                            problem.AddResidualBlock(pointToPointCost, nullptr, poseIncrement.getData());
-                        }
                     }
                 } else {
-                    // Use regular ICP constraints
+                    // Standard geometric constraints
                     if (m_bUsePointToPlaneConstraints) {
                         const auto& targetNormal = targetNormals[match.idx];
-                        if (!targetNormal.allFinite())
-                            continue;
+                        if (!targetNormal.allFinite()) continue;
                             
                         ceres::CostFunction* pointToPlaneCost = PointToPlaneConstraint::create(sourcePoint, targetPoint, targetNormal, 1.0f);
                         problem.AddResidualBlock(pointToPlaneCost, nullptr, poseIncrement.getData());
@@ -906,10 +923,11 @@ private:
 };
 
 /**
- * ICP optimizer - using linear least-squares for optimization.
+ * LinearICPOptimizer: Closed-form linear least squares optimization
+ * - Uses analytical solutions for fast computation
+ * - Supports point-to-plane constraints via linear system
+ * - Employs Procrustes analysis for point-to-point alignment
  */
- 
-
 class LinearICPOptimizer : public ICPOptimizer {
 public:
     LinearICPOptimizer() {}
@@ -920,34 +938,21 @@ public:
 
     virtual void estimatePose(const PointCloud& source, const PointCloud& target, Matrix4f& initialPose, 
                              const Matrix4f& groundTruthPose, const std::string& optimizerType) override {
-        // Build the index of the FLANN tree (for fast nearest neighbor lookup).
         buildColoredIndex(target);
-
-        // The initial estimate can be given as an argument.
         Matrix4f estimatedPose = initialPose;
 
+        // Main ICP iteration loop
         for (int i = 0; i < m_nIterations; ++i) {
-            // Compute the matches.
-            std::cout << "Matching points ..." << std::endl;
             auto startTime = std::chrono::high_resolution_clock::now();
-            clock_t begin = clock();
 
+            // Find correspondences
             auto transformedPoints = transformPoints(source.getPoints(), estimatedPose);
             auto transformedNormals = transformNormals(source.getNormals(), estimatedPose);
-
             auto matches = m_nearestNeighborSearch->queryMatches(transformedPoints);
             pruneCorrespondences(transformedNormals, target.getNormals(), matches);
 
-            clock_t end = clock();
-            double elapsedSecs = double(end - begin) / CLOCKS_PER_SEC;
-            std::cout << "Completed in " << elapsedSecs << " seconds." << std::endl;
-
-            std::vector<Vector3f> sourcePoints;
-            std::vector<Vector3f> targetPoints;
-
-            // Add all matches to the sourcePoints and targetPoints vector,
-            // so that the sourcePoints[i] matches targetPoints[i]. For every source point,
-            // the matches vector holds the index of the matching target point.
+            // Collect valid correspondences
+            std::vector<Vector3f> sourcePoints, targetPoints;
             for (int j = 0; j < transformedPoints.size(); j++) {
                 const auto& match = matches[j];
                 if (match.idx >= 0) {
@@ -956,94 +961,89 @@ public:
                 }
             }
 
-            // Estimate the new pose
+            // Estimate pose using linear methods
             if (m_bUsePointToPlaneConstraints) {
-                if (m_bUseColoredICP) {
-                    estimatedPose = estimatePosePointToPlane(sourcePoints, targetPoints, target.getNormals(), 
-                                                           source.getColors(), target.getColors()) * estimatedPose;
-                } else {
-                    estimatedPose = estimatePosePointToPlane(sourcePoints, targetPoints, target.getNormals()) * estimatedPose;
-                }
-            }
-            else {
-                if (m_bUseColoredICP) {
-                    estimatedPose = estimatePosePointToPoint(sourcePoints, targetPoints, source.getColors(), target.getColors()) * estimatedPose;
-                } else {
-                    estimatedPose = estimatePosePointToPoint(sourcePoints, targetPoints) * estimatedPose;
-                }
+                estimatedPose = estimatePosePointToPlane(sourcePoints, targetPoints, target.getNormals(), 
+                                                       source.getColors(), target.getColors()) * estimatedPose;
+            } else {
+                estimatedPose = estimatePosePointToPoint(sourcePoints, targetPoints, source.getColors(), target.getColors()) * estimatedPose;
             }
 
             auto endTime = std::chrono::high_resolution_clock::now();
             auto computationTime = std::chrono::duration<double>(endTime - startTime).count();
 
-            // Calculate and log metrics
             calculateAndLogMetrics(source.getPoints(), target.getPoints(), matches, 
                                  estimatedPose, groundTruthPose, i + 1, optimizerType, computationTime);
-
-            std::cout << "Optimization iteration done." << std::endl;
         }
 
-        // Store result
         initialPose = estimatedPose;
     }
 
-
 private:
+    // Point-to-point alignment using Procrustes analysis
     Matrix4f estimatePosePointToPoint(const std::vector<Vector3f>& sourcePoints, const std::vector<Vector3f>& targetPoints,
                                      const std::vector<Vector3f>& sourceColors = std::vector<Vector3f>(),
                                      const std::vector<Vector3f>& targetColors = std::vector<Vector3f>()) {
         if (m_bUseColoredICP && !sourceColors.empty() && !targetColors.empty()) {
-            // Colored point-to-point ICP with color-weighted constraints
-            const float colorWeight = 0.1f; // Weight for color similarity
-            const float maxColorDiff = 0.3f; // Maximum color difference threshold
+            // Color-weighted point-to-point alignment
+            const float colorWeight = 0.1f;
+            const float maxColorDiff = 0.3f;
             
-            // Step 1: Calculate color-based weights for each correspondence
-            std::vector<float> correspondenceWeights;
-            std::vector<Vector3f> filteredSourcePoints;
-            std::vector<Vector3f> filteredTargetPoints;
-            
+            // Filter correspondences based on color similarity
+            std::vector<Vector3f> filteredSourcePoints, filteredTargetPoints;
             for (size_t i = 0; i < sourcePoints.size() && i < sourceColors.size() && i < targetColors.size(); ++i) {
-                // Calculate color difference (Euclidean distance in RGB space)
                 Vector3f colorDiff = sourceColors[i] - targetColors[i];
                 float colorDistance = colorDiff.norm();
                 
-                // Calculate color similarity weight (exponential decay)
-                float colorSimilarity = std::exp(-colorDistance / maxColorDiff);
-                
-                // Combined weight: geometric + color similarity
-                float combinedWeight = 1.0f + colorWeight * colorSimilarity;
-                
-                // Only include correspondences with reasonable color similarity
                 if (colorDistance < maxColorDiff) {
-                    correspondenceWeights.push_back(combinedWeight);
                     filteredSourcePoints.push_back(sourcePoints[i]);
                     filteredTargetPoints.push_back(targetPoints[i]);
                 }
             }
             
-            // Step 2: Apply color-weighted Procrustes alignment
-            if (filteredSourcePoints.size() >= 3) { // Need minimum points for alignment
+            if (filteredSourcePoints.size() >= 3) {
                 ProcrustesAligner procrustAligner;
-                
-                // Use standard Procrustes alignment with filtered points
-                // The filtering already provides color-based weighting by excluding poor matches
-                Matrix4f estimatedPose = procrustAligner.estimatePose(filteredSourcePoints, 
-                                                                     filteredTargetPoints);
-                return estimatedPose;
-            } else {
-                // Fallback to geometric-only alignment if not enough colored correspondences
-                ProcrustesAligner procrustAligner;
-                Matrix4f estimatedPose = procrustAligner.estimatePose(sourcePoints, targetPoints);
-                return estimatedPose;
+                return procrustAligner.estimatePose(filteredSourcePoints, filteredTargetPoints);
             }
-        } else {
-            // Standard geometric point-to-point alignment
-            ProcrustesAligner procrustAligner;
-            Matrix4f estimatedPose = procrustAligner.estimatePose(sourcePoints, targetPoints);
-            return estimatedPose;
         }
+        
+        // Standard geometric alignment
+        ProcrustesAligner procrustAligner;
+        return procrustAligner.estimatePose(sourcePoints, targetPoints);
     }
 
+    // Point-to-plane alignment using linear least squares
+    Matrix4f estimatePosePointToPlane(const std::vector<Vector3f>& sourcePoints, const std::vector<Vector3f>& targetPoints, 
+                                     const std::vector<Vector3f>& targetNormals, 
+                                     const std::vector<Vector3f>& sourceColors = std::vector<Vector3f>(), 
+                                     const std::vector<Vector3f>& targetColors = std::vector<Vector3f>()) {
+        const unsigned nPoints = sourcePoints.size();
+        bool useColoredICP = m_bUseColoredICP && !sourceColors.empty() && !targetColors.empty();
+        
+        // Build linear system: A*x = b, where x = [alpha, beta, gamma, tx, ty, tz]
+        unsigned constraintsPerPoint = useColoredICP ? 7 : 4; // geometric + color constraints
+        MatrixXf A = MatrixXf::Zero(constraintsPerPoint * nPoints, 6);
+        VectorXf b = VectorXf::Zero(constraintsPerPoint * nPoints);
+
+        const float maxColorDiff = 0.3f;
+        const float colorWeight = 0.1f;
+
+        for (unsigned i = 0; i < nPoints; ++i) {
+            const auto& s = sourcePoints[i];
+            const auto& d = targetPoints[i];
+            const auto& n = targetNormals[i];
+
+            // Point-to-plane constraint: n · (R*s + t - d) = 0
+            A(constraintsPerPoint * i, 0) = n.z() * s.y() - n.y() * s.z();  // rotation about x
+            A(constraintsPerPoint * i, 1) = n.x() * s.z() - n.z() * s.x();  // rotation about y
+            A(constraintsPerPoint * i, 2) = n.y() * s.x() - n.x() * s.y();  // rotation about z
+            A.block<1, 3>(constraintsPerPoint * i, 3) = n;                   // translation
+            b(constraintsPerPoint * i) = (d - s).dot(n);
+
+            // Additional point-to-point constraints for stability
+            A.block<3, 3>(constraintsPerPoint * i + 1, 0) << 0.0f, s.z(), -s.y(),
+                                                              -s.z(), 0.0f, s.x(),
+                                                               s.y(), -s.x(), 0.0f;
     Matrix4f estimatePosePointToPlane(const std::vector<Vector3f>& sourcePoints, const std::vector<Vector3f>& targetPoints, 
                                      const std::vector<Vector3f>& targetNormals, 
                                      const std::vector<Vector3f>& sourceColors = std::vector<Vector3f>(), 
